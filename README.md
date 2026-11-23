@@ -1,0 +1,2 @@
+# dexcom_auto_inventory_management_via_mailaccount
+Automated Dexcom Inventory Management by email-account
