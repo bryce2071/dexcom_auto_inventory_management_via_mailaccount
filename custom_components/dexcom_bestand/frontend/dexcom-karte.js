@@ -21,7 +21,7 @@
  *   titel: ""
  *   tab: sensoren | lieferungen | reklamationen
  */
-const DXK_VERSION = "1.2.0";
+const DXK_VERSION = "1.2.1";
 const WT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const NB = " ";
 const TABS = [
@@ -791,7 +791,7 @@ function lieferungAnsicht(d, m) {
 <div class="inhalt">
 ${unklar ? `<div class="frage">${icon("mdi:help-circle-outline")}<span>DHL-Sendung von Dexcom ohne Versand- oder Reklamationsmail. Unter „Korrigieren“ Art und Anzahl eintragen, damit der Bestand stimmt.</span></div>` : ""}
 ${wert("Status", `<span class="badge ${L.status === "zugestellt" ? "ok" : "gut"}">${esc(LIEF_STATUS[L.status] || L.status)}</span>`, L.zugestellt_angenommen ? "angenommen („kommt heute“ ohne spätere Zustellmeldung)" : "")}
-${wert("Art", esc(ART_NAME[L.art] || L.art))}
+${wert("Art", esc(ART_NAME[L.art] || L.art), L.herkunft === "kundendienst" ? "Versand laut Antwort des Kundenservice (ohne Versandbestätigung)" : L.herkunft === "abgeleitet" ? "ohne Versandmail – als fällige Lieferung erkannt; sonst unter „Korrigieren“ ändern" : "")}
 ${wert("Inhalt", L.modell ? `${L.anzahl}× ${esc(L.modell)}` : `${L.anzahl} ${L.anzahl === 1 ? "Sensor" : "Sensoren"} (Modell unbekannt)`, L.art === "quartal" && !(L.korrigiert || []).includes("anzahl") ? "Anzahl nach Einstellung – in der Mail steht keine" : "")}
 ${wert("Zeitraum", L.zeitraum_von ? `${esc(datumText(L.zeitraum_von, tz))} – ${esc(datumText(L.zeitraum_bis, tz))}` : "", L.teil ? (L.letzte ? "vorerst letzte Teillieferung" : "Teillieferung") : "")}
 ${wert("Bestellt", L.bestellt ? esc(tagZeit(L.bestellt, tz, m.heute)) : "")}

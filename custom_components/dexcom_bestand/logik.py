@@ -281,6 +281,23 @@ def _mail_lesen(m, tz):
         aus.update({"typ": "fall_antwort", "antwort": art})
         return aus
 
+    # Antworten (Aw:/Re:/WG:): nur der eigene Text zählt, nicht das zitierte Original darunter
+    antwort = bool(re.match(r"(?:(?:aw|re|wg|fw|fwd)\s*:\s*)+", b))
+    if antwort:
+        mz = re.search(r"\s(?:Von|From)\s*:\s|\sGesendet\s*:|-{3,}\s*(?:Original|Ursprüngliche)|\sschrieb am\s|\swrote:\s", t)
+        if mz:
+            t = t[:mz.start()]
+            tl = t.lower()
+    kundendienst = antwort or "customer service" in von or "kundenservice" in von or adr.startswith("de.info@")
+
+    def versand_laut_kundendienst():
+        for mk in re.finditer(r"an den versand übergeben|an (?:unseren|den) versanddienstleister übergeben|auf dem weg zu ihnen"
+                              r"|(?:wurde|wird) (?:heute |gestern |bereits |soeben )?(?:versendet|versandt|verschickt)", tl):
+            davor = tl[max(0, mk.start() - 60):mk.start()]
+            if not re.search(r"\bnicht\b|\bnoch kein|\bsobald\b|\bwenn\b|\bvoraussichtlich\b|\bdemnächst\b", davor):
+                return True
+        return False
+
     extra = {}
     fr = (re.search(r"Folgerezept.{0,160}?zum\s*\*?\s*(\d{1,2}\.\d{1,2}\.\d{4})", t)
           or re.search(r"zum\s*\*?\s*(\d{1,2}\.\d{1,2}\.\d{4})\s*\*?\s*ein neues Rezept", t))
@@ -296,6 +313,12 @@ def _mail_lesen(m, tz):
     if mv:
         aus.update({"typ": "versand", "von": dat(mv.group(1)), "bis": dat(mv.group(2)),
                     "teil": "teillieferung" in b, "letzte": "letzte" in b})
+        aus.update(extra)
+        return aus
+
+    # --- Kundenservice: „Ihre Lieferung wurde heute an den Versand übergeben“ (ohne Versandbestätigung) ---
+    if kundendienst and not re.search(r"\bDE\d{6,}[A-Z]{0,3}\b", t) and versand_laut_kundendienst():
+        aus.update({"typ": "versand", "von": None, "bis": None, "teil": False, "letzte": False, "kundendienst": True})
         aus.update(extra)
         return aus
 
@@ -343,7 +366,7 @@ def _neue_lieferung(lid, art, versendet):
     return {"id": lid, "art": art, "versendet": versendet, "bestellt": None, "sendungsnr": None, "dhl": [],
             "quellen": [], "faelle": [], "anzahl_mail": None, "modell_mail": None, "zugestellt_mail": None,
             "zeitraum_von": None, "zeitraum_bis": None, "teil": False, "letzte": False, "folgerezept": None,
-            "bestellnr": None, "manuell": False, "notiz": ""}
+            "bestellnr": None, "manuell": False, "notiz": "", "kundendienst": False, "abgeleitet": False}
 
 
 def _ableiten(mails, daten, jetzt, tz):
@@ -415,15 +438,29 @@ def _ableiten(mails, daten, jetzt, tz):
         if typ == "ankuendigung":
             ank.append({"uid": uid, "datum": md, "versand_geplant": m.get("versand_geplant"), "vorbereitung_ab": m.get("vorbereitung_ab")})
         elif typ == "versand":
-            frueher = [x for x in lief if x["art"] == "unbekannt" and x.get("versendet") and md - timedelta(hours=36) <= x["versendet"] <= md]
-            if frueher:
-                L = frueher[-1]
-                L["art"] = "quartal"
-            else:
+            kd = bool(m.get("kundendienst"))
+            L = None
+            # dieselbe Sendung schon bekannt? unklare DHL-Sendung (36 h) oder Kundenservice-Antwort bzw.
+            # aus DHL abgeleitete Quartalslieferung (5 Tage) – dann zusammenführen statt doppelt zählen
+            for x in reversed(lief):
+                if not x.get("versendet") or x["versendet"] > md:
+                    continue
+                alter = md - x["versendet"]
+                if x["art"] == "unbekannt" and alter <= timedelta(hours=36):
+                    L = x
+                    break
+                if x["art"] == "quartal" and alter <= timedelta(days=5) and (kd or x.get("kundendienst") or x.get("abgeleitet")):
+                    L = x
+                    break
+            if L is None:
                 L = _neue_lieferung("M" + uid, "quartal", md)
+                L["kundendienst"] = kd
                 lief.append(L)
-            L.update({"zeitraum_von": m.get("von"), "zeitraum_bis": m.get("bis"), "teil": bool(m.get("teil")),
-                      "letzte": bool(m.get("letzte")), "folgerezept": m.get("folgerezept")})
+            L["art"] = "quartal"
+            L["abgeleitet"] = False
+            if not kd:
+                L.update({"zeitraum_von": m.get("von"), "zeitraum_bis": m.get("bis"), "teil": bool(m.get("teil")),
+                          "letzte": bool(m.get("letzte")), "folgerezept": m.get("folgerezept"), "kundendienst": False})
             L["quellen"].append(uid)
         elif typ in ("shop_bestellt", "shop_versand"):
             nr = m.get("bestellnr") or uid
@@ -466,7 +503,20 @@ def _ableiten(mails, daten, jetzt, tz):
                 else:
                     offen = [f for f in faelle if f["lieferung"] is None and f["datum"] <= md
                              and f["datum"] >= md - timedelta(days=21) and f["antwort"] != "abgelehnt"]
-                    if offen:
+                    # angekündigte Quartalslieferung, deren Versandzeitraum begonnen hat (Dexcom schickt nicht immer eine Versandmail)
+                    q_versand = [x["versendet"] for x in lief if x["art"] == "quartal" and x.get("versendet")]
+                    q_letzte = max(q_versand) if q_versand else None
+                    q_ank = [a for a in ank if (q_letzte is None or a["datum"] > q_letzte) and a["datum"] <= md]
+                    q_start = None
+                    if q_ank:
+                        if q_ank[-1].get("vorbereitung_ab"):
+                            q_start = _datum(q_ank[-1]["vorbereitung_ab"])
+                        elif q_ank[-1].get("versand_geplant"):
+                            q_start = _datum(q_ank[-1]["versand_geplant"]) - timedelta(days=1)
+                    if not offen and q_start is not None and md.date() >= q_start:
+                        L = _neue_lieferung("D" + nr, "quartal", md)
+                        L["abgeleitet"] = True
+                    elif offen:
                         offen.sort(key=lambda f: (0 if f["antwort"] in ("ersatz", "kulanz") else 1,
                                                   0 if f["quelle"] == "mail" else 1, f["datum"]))
                         f = offen[0]
@@ -1280,6 +1330,7 @@ def _ausgabe(a, daten, mails_info, jetzt):
                 "zeitraum_bis": L.get("zeitraum_bis"), "teil": L.get("teil"), "letzte": L.get("letzte"),
                 "folgerezept": L.get("folgerezept"), "bestellnr": L.get("bestellnr"), "faelle": L.get("faelle") or [],
                 "manuell": L["manuell"], "aus": L.get("aus", False), "notiz": L.get("notiz") or "", "korrigiert": L.get("korrigiert") or [],
+                "herkunft": "kundendienst" if L.get("kundendienst") else ("abgeleitet" if L.get("abgeleitet") else None),
                 "dhl": [{"datum": _iso(x["datum"]), "status": x["status"], "erwartet": x.get("erwartet"), "fenster": x.get("fenster")} for x in L["dhl"]]}
 
     def fall_out(f):
