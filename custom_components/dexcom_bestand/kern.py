@@ -601,7 +601,8 @@ class DexcomKern:
         return erg
 
     async def _dienst_fall(self, p: dict) -> dict:
-        werte = {"sensor_id": p.get("sensor_id"), "am": p.get("am"), "notiz": p.get("notiz"), "fall_datum": p.get("fall_datum")}
+        werte = {"sensor_id": p.get("sensor_id"), "am": p.get("am"), "notiz": p.get("notiz"), "fall_datum": p.get("fall_datum"),
+                 "antwort": p.get("antwort")}
         erg = L._fall_aktion(self.daten, L._fall_norm(p.get("fall_id")), str(p.get("aktion") or ""), werte, dt_util.now(),
                              self._tz())
         if erg.get("ok"):
@@ -610,7 +611,7 @@ class DexcomKern:
 
     async def _dienst_lieferung(self, p: dict) -> dict:
         werte = {"id": p.get("id"), "aktion": p.get("aktion") or "speichern", "am": p.get("am")}
-        for k in ("art", "anzahl", "modell", "zugestellt_am", "versendet", "notiz"):
+        for k in ("art", "anzahl", "modell", "zugestellt_am", "versendet", "notiz", "zeitraum_von", "zeitraum_bis", "sendungsnr"):
             if p.get(k) is not None:
                 werte[k] = p[k]
         erg = L._lieferung_aktion(self.daten, werte, dt_util.now(), self._tz())
@@ -663,6 +664,11 @@ class DexcomKern:
     async def _dienst_rezept(self, p: dict) -> dict:
         d = self.daten
         jetzt = dt_util.now()
+        if p.get("aktion") == "termin":
+            erg = L._rezept_termin(d, p.get("bis"), jetzt)
+            if erg.get("ok"):
+                await self.async_geaendert()
+            return erg
         rz = self._auswerten(jetzt)["folgerezept"]
         if p.get("aktion") == "offen":
             d["rezept"] = None

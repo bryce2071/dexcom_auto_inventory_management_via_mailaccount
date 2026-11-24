@@ -236,7 +236,7 @@
     },
     "fall": {
       "name": "Support-Fall",
-      "description": "Fall aus den Mails einem Sensor zuordnen, Ersatz als erhalten markieren, abschließen oder wieder öffnen.",
+      "description": "Fall aus den Mails einem Sensor zuordnen, Dexcom-Antwort korrigieren, Ersatz als erhalten markieren, abschließen oder wieder öffnen.",
       "fields": {
         "fall_id": {
           "name": "Fall",
@@ -244,7 +244,7 @@
         },
         "aktion": {
           "name": "Aktion",
-          "description": "zuordnen, ersatz_erhalten, erledigt, offen, notiz."
+          "description": "zuordnen, ersatz_erhalten, erledigt, offen, notiz, antwort."
         },
         "sensor_id": {
           "name": "Sensor",
@@ -257,12 +257,16 @@
         "notiz": {
           "name": "Notiz",
           "description": "Freitext."
+        },
+        "antwort": {
+          "name": "Dexcom-Antwort",
+          "description": "Bei antwort: mail (wie aus der Mail), keine, ersatz, kulanz, abgelehnt oder info."
         }
       }
     },
     "lieferung": {
       "name": "Lieferung",
-      "description": "Lieferung aus den Mails korrigieren (Art, Anzahl, Modell, zugestellt) oder von Hand eintragen (ohne ID).",
+      "description": "Lieferung aus den Mails korrigieren (Art, Anzahl, Modell, Versand, Versorgungszeitraum, Sendungsnummer, zugestellt) oder von Hand eintragen (ohne ID); für die angekündigte nächste Lieferung: erledigt, wieder anzeigen oder eigene Frist.",
       "fields": {
         "id": {
           "name": "ID",
@@ -270,7 +274,7 @@
         },
         "aktion": {
           "name": "Aktion",
-          "description": "speichern, neu, zugestellt, nicht_zugestellt, ausblenden, einblenden, zuruecksetzen, loeschen."
+          "description": "speichern, neu, zugestellt, nicht_zugestellt, ausblenden, einblenden, zuruecksetzen, loeschen, ankuendigung_erledigt, ankuendigung_offen, ankuendigung_frist."
         },
         "art": {
           "name": "Art",
@@ -294,11 +298,23 @@
         },
         "am": {
           "name": "Am",
-          "description": "Bei zugestellt: wann."
+          "description": "Bei zugestellt: wann; bei ankuendigung_frist: Zustellung bis (leer = wie aus der Mail)."
         },
         "notiz": {
           "name": "Notiz",
           "description": "Freitext."
+        },
+        "zeitraum_von": {
+          "name": "Versorgungszeitraum ab",
+          "description": "Datum; leer = wie aus der Mail."
+        },
+        "zeitraum_bis": {
+          "name": "Versorgungszeitraum bis",
+          "description": "Datum; leer = wie aus der Mail."
+        },
+        "sendungsnr": {
+          "name": "Sendungsnummer",
+          "description": "DHL-Sendungsnummer; leer = wie aus der Mail."
         }
       }
     },
@@ -340,15 +356,19 @@
     },
     "rezept": {
       "name": "Folgerezept",
-      "description": "Folgerezept als verschickt markieren (stoppt die Erinnerung) oder wieder öffnen.",
+      "description": "Folgerezept als verschickt markieren (stoppt die Erinnerung), wieder öffnen oder den Termin von Hand setzen.",
       "fields": {
         "aktion": {
           "name": "Aktion",
-          "description": "verschickt oder offen."
+          "description": "verschickt, offen oder termin."
         },
         "am": {
           "name": "Am",
           "description": "Verschickt am (Standard jetzt)."
+        },
+        "bis": {
+          "name": "Im Original bis",
+          "description": "Bei termin: Datum; leer = wieder aus den Mails."
         }
       }
     },

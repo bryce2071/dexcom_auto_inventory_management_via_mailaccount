@@ -541,7 +541,8 @@ def _ableiten(mails, daten, jetzt, tz):
     for h in daten.get("lieferungen") or []:
         L = _neue_lieferung(h["id"], h.get("art") or "sonstige", _zeit(h.get("versendet"), tz))
         L.update({"manuell": True, "anzahl_mail": h.get("anzahl"), "modell_mail": h.get("modell"),
-                  "zugestellt_mail": _zeit(h.get("zugestellt_am"), tz), "notiz": h.get("notiz") or ""})
+                  "zugestellt_mail": _zeit(h.get("zugestellt_am"), tz), "notiz": h.get("notiz") or "",
+                  "zeitraum_von": h.get("zeitraum_von"), "zeitraum_bis": h.get("zeitraum_bis"), "sendungsnr": h.get("sendungsnr")})
         lief.append(L)
 
     # Korrekturen, Standardwerte, Status
@@ -550,6 +551,11 @@ def _ableiten(mails, daten, jetzt, tz):
         k = {} if L["manuell"] else (kl.get(L["id"]) or {})
         if k.get("art") in ARTEN:
             L["art"] = k["art"]
+        if k.get("versendet"):
+            L["versendet"] = _zeit(k["versendet"], tz) or L.get("versendet")
+        for feld in ("zeitraum_von", "zeitraum_bis", "sendungsnr"):
+            if k.get(feld):
+                L[feld] = k[feld]
         angenommen = False
         if k.get("nicht_zugestellt"):
             z = None
@@ -611,6 +617,9 @@ def _ableiten(mails, daten, jetzt, tz):
         sensor_nach_id[s["id"]] = s
     for f in faelle:
         k = kf.get(f["id"]) or {}
+        f["antwort_korrigiert"] = "antwort" in k
+        if "antwort" in k:
+            f["antwort"] = k["antwort"]
         if f["quelle"] == "mail" and k.get("sensor") is not None:
             f["sensor"] = k.get("sensor") or None
         s = sensor_nach_id.get(f.get("sensor")) if f.get("sensor") else None
@@ -636,10 +645,18 @@ def _ableiten(mails, daten, jetzt, tz):
         f["notiz"] = k.get("notiz") or ""
         f["historisch"] = bool(inv_zeit is not None and f["datum"] < inv_zeit)
 
-    # nächste Lieferung
-    versand = [L["versendet"] for L in lief if L["art"] == "quartal" and L.get("versendet") and not L["manuell"]]
+    # nächste Lieferung (eine von Hand eingetragene Quartalslieferung zählt mit ihrem Versand- bzw. Zustelldatum)
+    kn = korr.get("naechste") or {}
+    versand = []
+    for L in lief:
+        bez = L.get("versendet") or (L.get("zugestellt_am") if L["manuell"] else None)
+        if L["art"] == "quartal" and bez and not L.get("aus"):
+            versand.append(bez)
     letzte = max(versand) if versand else None
-    nach = [a for a in ank if letzte is None or a["datum"] > letzte]
+    offen_ank = [a for a in ank if letzte is None or a["datum"] > letzte]
+    erledigt_bis = _zeit(kn.get("erledigt_bis"), tz)
+    nach = [a for a in offen_ank if erledigt_bis is None or a["datum"] > erledigt_bis]
+    naechste_aus = len(nach) < len(offen_ank)
     naechste = None
     if nach:
         a = nach[-1]
@@ -648,14 +665,25 @@ def _ableiten(mails, daten, jetzt, tz):
             frist = _datum(a["vorbereitung_ab"]) + timedelta(days=14)
         elif a.get("versand_geplant"):
             frist = _datum(a["versand_geplant"]) + timedelta(days=6)
+        fk = kn.get("frist") or {}
+        fk_gesetzt = _zeit(fk.get("gesetzt"), tz)
+        frist_manuell = bool(fk.get("datum") and _datum(fk["datum"]) and fk_gesetzt is not None and fk_gesetzt >= nach[0]["datum"])
+        if frist_manuell:
+            frist = _datum(fk["datum"])
         status = "angekuendigt"
         if frist and jetzt.date() > frist:
             status = "ueberfaellig"
         naechste = {"uid": a["uid"], "angekuendigt": [_iso(x["datum"].date()) for x in nach],
                     "vorbereitung_ab": a.get("vorbereitung_ab"), "versand_geplant": a.get("versand_geplant"),
-                    "frist": _iso(frist), "status": status,
+                    "frist": _iso(frist), "status": status, "frist_manuell": frist_manuell,
                     "tage_ueber": (jetzt.date() - frist).days if (frist and status == "ueberfaellig") else 0}
-    return {"lieferungen": lief, "faelle": faelle, "naechste": naechste,
+    # Folgerezept-Termin von Hand (gilt, bis eine neuere Mail einen Termin nennt)
+    kr = korr.get("rezept") or {}
+    if kr.get("bis") and _datum(kr["bis"]):
+        kr_gesetzt = _zeit(kr.get("gesetzt"), tz)
+        if rezept is None or kr_gesetzt is None or kr_gesetzt >= rezept["mail"]:
+            rezept = {"bis": _datum(kr["bis"]).isoformat(), "mail": kr_gesetzt or jetzt, "manuell": True}
+    return {"lieferungen": lief, "faelle": faelle, "naechste": naechste, "naechste_ausgeblendet": naechste_aus,
             "rezept": rezept, "genehmigung": genehmigung}
 
 
@@ -779,7 +807,8 @@ def _auswerten(daten, mails, jetzt, tz):
     if abl["rezept"]:
         verschickt = (daten.get("rezept") or {}).get("verschickt_fuer") == abl["rezept"]["bis"]
         rz = {"bis": abl["rezept"]["bis"], "aus_mail": _iso(abl["rezept"]["mail"]), "verschickt": verschickt,
-              "verschickt_am": (daten.get("rezept") or {}).get("verschickt_am") if verschickt else None}
+              "verschickt_am": (daten.get("rezept") or {}).get("verschickt_am") if verschickt else None,
+              "manuell": bool(abl["rezept"].get("manuell"))}
     warn = []
     n = abl["naechste"]
     if n and n["status"] == "ueberfaellig":
@@ -929,7 +958,8 @@ def _normalisieren(d):
         "zaehler": int(d.get("zaehler") or 0),
         "sensoren": [s for s in (d.get("sensoren") or []) if isinstance(s, dict) and s.get("id")],
         "lieferungen": [x for x in (d.get("lieferungen") or []) if isinstance(x, dict) and x.get("id")],
-        "korrekturen": {"lieferungen": dict(k.get("lieferungen") or {}), "faelle": dict(k.get("faelle") or {})},
+        "korrekturen": {"lieferungen": dict(k.get("lieferungen") or {}), "faelle": dict(k.get("faelle") or {}),
+                        "naechste": dict(k.get("naechste") or {}), "rezept": dict(k.get("rezept") or {})},
         "inventur": d.get("inventur") or None,
         "rezept": d.get("rezept") or None,
         "einstellungen": e,
@@ -1154,6 +1184,14 @@ def _fall_aktion(daten, fid, aktion, p, jetzt, tz):
         k["ersatz_erhalten"] = _iso(am)
     elif aktion == "notiz":
         k["notiz"] = str(p.get("notiz") or "").strip()[:500]
+    elif aktion == "antwort":
+        a = str(p.get("antwort") or "").strip()
+        if a in ("", "mail"):
+            k.pop("antwort", None)
+        elif a in ("keine", "ersatz", "kulanz", "abgelehnt", "info"):
+            k["antwort"] = None if a == "keine" else a
+        else:
+            return {"ok": False, "fehler": "Unbekannte Antwort: " + a}
     else:
         return {"ok": False, "fehler": "Unbekannte Aktion: " + str(aktion)}
     kf[fid] = k
@@ -1163,6 +1201,29 @@ def _fall_aktion(daten, fid, aktion, p, jetzt, tz):
 def _lieferung_aktion(daten, p, jetzt, tz):
     aktion = str(p.get("aktion") or "speichern")
     lid = str(p.get("id") or "").strip()
+
+    def tag(x):
+        d = _datum(x)
+        return d.isoformat() if d else None
+
+    if aktion in ("ankuendigung_erledigt", "ankuendigung_offen", "ankuendigung_frist"):
+        kn = daten["korrekturen"].setdefault("naechste", {})
+        if aktion == "ankuendigung_erledigt":
+            kn["erledigt_bis"] = _iso(jetzt)
+        elif aktion == "ankuendigung_offen":
+            kn.pop("erledigt_bis", None)
+        elif p.get("am") in (None, ""):
+            kn.pop("frist", None)
+        elif tag(p.get("am")) is None:
+            return {"ok": False, "fehler": "Datum nicht erkannt."}
+        else:
+            kn["frist"] = {"datum": tag(p.get("am")), "gesetzt": _iso(jetzt)}
+        return {"ok": True, "aktion": aktion}
+    for feld in ("zeitraum_von", "zeitraum_bis"):
+        if p.get(feld) not in (None, "") and tag(p.get(feld)) is None:
+            return {"ok": False, "fehler": "Datum im Versorgungszeitraum nicht erkannt."}
+    if p.get("versendet") not in (None, "") and _zeit(p.get("versendet"), tz) is None:
+        return {"ok": False, "fehler": "Versanddatum nicht erkannt."}
     if aktion == "neu" or (not lid and aktion == "speichern"):
         art = p.get("art") if p.get("art") in ARTEN else "sonstige"
         z = _zeit(p.get("zugestellt_am"), tz) if p.get("zugestellt_am") else jetzt
@@ -1172,7 +1233,9 @@ def _lieferung_aktion(daten, p, jetzt, tz):
             return {"ok": False, "fehler": "Anzahl ist keine Zahl."}
         h = {"id": _neue_id("H"), "art": art, "anzahl": anz, "modell": _modell_norm(p.get("modell")) or (daten["einstellungen"].get("modell_lieferung") or "G7"),
              "versendet": _iso(_zeit(p.get("versendet"), tz)) if p.get("versendet") else None,
-             "zugestellt_am": _iso(z), "notiz": str(p.get("notiz") or "").strip()[:500], "erstellt": _iso(jetzt)}
+             "zugestellt_am": _iso(z), "notiz": str(p.get("notiz") or "").strip()[:500], "erstellt": _iso(jetzt),
+             "zeitraum_von": tag(p.get("zeitraum_von")), "zeitraum_bis": tag(p.get("zeitraum_bis")),
+             "sendungsnr": re.sub(r"\s+", "", str(p.get("sendungsnr") or ""))[:40] or None}
         daten["lieferungen"].append(h)
         return {"ok": True, "id": h["id"], "aktion": "angelegt"}
     if not lid:
@@ -1226,6 +1289,20 @@ def _lieferung_aktion(daten, p, jetzt, tz):
                 ziel.pop("zugestellt_am", None)
         if "notiz" in p:
             ziel["notiz"] = str(p.get("notiz") or "").strip()[:500]
+        # Versand, Versorgungszeitraum, Sendungsnummer (leer = wie aus den Mails)
+        neu_werte = {}
+        if "versendet" in p:
+            neu_werte["versendet"] = _iso(_zeit(p["versendet"], tz)) if p["versendet"] not in (None, "") else None
+        for feld in ("zeitraum_von", "zeitraum_bis"):
+            if feld in p:
+                neu_werte[feld] = tag(p[feld])
+        if "sendungsnr" in p:
+            neu_werte["sendungsnr"] = re.sub(r"\s+", "", str(p["sendungsnr"] or ""))[:40] or None
+        for feld, wert in neu_werte.items():
+            if wert is None and not lid.startswith("H"):
+                ziel.pop(feld, None)
+            else:
+                ziel[feld] = wert
     else:
         return {"ok": False, "fehler": "Unbekannte Aktion: " + aktion}
     if not lid.startswith("H"):
@@ -1234,6 +1311,18 @@ def _lieferung_aktion(daten, p, jetzt, tz):
         else:
             daten["korrekturen"]["lieferungen"].pop(lid, None)
     return {"ok": True, "id": lid, "aktion": aktion}
+
+
+def _rezept_termin(daten, bis, jetzt):
+    """Folgerezept-Termin von Hand setzen (leer = wieder aus den Mails)."""
+    if bis in (None, ""):
+        daten["korrekturen"]["rezept"] = {}
+        return {"ok": True, "termin": None}
+    d = _datum(bis)
+    if d is None:
+        return {"ok": False, "fehler": "Datum nicht erkannt."}
+    daten["korrekturen"]["rezept"] = {"bis": d.isoformat(), "gesetzt": _iso(jetzt)}
+    return {"ok": True, "termin": d.isoformat()}
 
 
 def _einst_sauber(neu, alt):
@@ -1337,7 +1426,7 @@ def _ausgabe(a, daten, mails_info, jetzt):
         return {"id": f["id"], "nummern": f["nummern"], "datum": _iso(f["datum"]), "antwort": f["antwort"],
                 "antwort_datum": _iso(f["antwort_datum"]), "lieferung": f["lieferung"], "quelle": f["quelle"],
                 "sensor": f.get("sensor"), "status": f["status"], "ersatz_erhalten_am": _iso(f.get("ersatz_erhalten_am")),
-                "notiz": f.get("notiz") or "", "historisch": f["historisch"]}
+                "notiz": f.get("notiz") or "", "historisch": f["historisch"], "antwort_korrigiert": bool(f.get("antwort_korrigiert"))}
 
     lief = sorted(a["abl"]["lieferungen"], key=lambda L: (L.get("zugestellt_am") or L.get("versendet") or L.get("bestellt") or jetzt), reverse=True)
     faelle = sorted(a["abl"]["faelle"], key=lambda f: f["datum"], reverse=True)
@@ -1361,6 +1450,7 @@ def _ausgabe(a, daten, mails_info, jetzt):
         "sensoren": sens,
         "lieferungen": [lief_out(L) for L in lief],
         "naechste": a["abl"]["naechste"],
+        "naechste_ausgeblendet": bool(a["abl"].get("naechste_ausgeblendet")),
         "faelle": [fall_out(f) for f in faelle],
         "bestand": best,
         "reicht_bis": _iso(a["reicht_bis"]),

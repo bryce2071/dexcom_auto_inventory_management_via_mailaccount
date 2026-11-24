@@ -26,6 +26,9 @@ mail recognition is tuned to German Dexcom, Dexcom webshop and DHL mails.*
 - **Benachrichtigungen** aufs Handy (Home-Assistant-App): Sensorwechsel fällig, neuer Sensor erkannt,
   Lieferung überfällig bzw. Bestand knapp, Ersatz fehlt, Folgerezept fällig – mit Ruhezeit in der Nacht.
   Antippen öffnet die Übersicht.
+- **Alles korrigierbar:** Sensoren (alle Etikett-Daten, gesetzt, entfernt), Lieferungen (Art, Anzahl, Modell, Versand,
+  Versorgungszeitraum, Sendungsnummer, Zustellung), die angekündigte Lieferung („ist angekommen“, eigene Frist,
+  ausblenden), die Antwort von Dexcom zu einem Fall, der Folgerezept-Termin und der Bestand (Inventur).
 - **Eigene Seite in der Seitenleiste** („Dexcom“) und eine Karte für eigene Dashboards.
 
 ## Voraussetzungen
@@ -111,11 +114,11 @@ actions:
 | `dexcom_bestand.sensor` | Sensor eintragen (ohne `id`) oder ändern (mit `id`) |
 | `dexcom_bestand.foto` | Etikett-Foto hochladen, holen oder löschen |
 | `dexcom_bestand.reklamation` | Sensor reklamieren, Ersatz erhalten, abschließen, aufheben |
-| `dexcom_bestand.fall` | Support-Fall aus den Mails einem Sensor zuordnen, abschließen |
-| `dexcom_bestand.lieferung` | Lieferung korrigieren oder von Hand eintragen |
+| `dexcom_bestand.fall` | Support-Fall aus den Mails einem Sensor zuordnen, Antwort korrigieren, abschließen |
+| `dexcom_bestand.lieferung` | Lieferung korrigieren oder von Hand eintragen; angekündigte Lieferung ausblenden oder Frist ändern |
 | `dexcom_bestand.loeschen` | Sensor in den Papierkorb (oder zurück) |
 | `dexcom_bestand.inventur` | Bestand zu einem Zeitpunkt setzen |
-| `dexcom_bestand.rezept` | Folgerezept als verschickt markieren |
+| `dexcom_bestand.rezept` | Folgerezept als verschickt markieren oder den Termin von Hand setzen |
 | `dexcom_bestand.einstellungen` | Einstellungen ändern |
 | `dexcom_bestand.gmail` | Postfach jetzt prüfen (sonst 07:35, 12:35 und 18:35 Uhr sowie bei neuen Mails laut IMAP-Integration) |
 | `dexcom_bestand.pruefen` | fällige Benachrichtigungen anzeigen (Probelauf) oder senden |

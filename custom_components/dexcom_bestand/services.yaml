@@ -112,7 +112,7 @@ fall:
       required: true
       selector:
         select:
-          options: ["zuordnen", "ersatz_erhalten", "erledigt", "offen", "notiz"]
+          options: ["zuordnen", "ersatz_erhalten", "erledigt", "offen", "notiz", "antwort"]
     sensor_id:
       selector:
         text:
@@ -122,6 +122,10 @@ fall:
     notiz:
       selector:
         text:
+    antwort:
+      selector:
+        select:
+          options: ["mail", "keine", "ersatz", "kulanz", "abgelehnt", "info"]
 
 lieferung:
   fields:
@@ -132,7 +136,8 @@ lieferung:
       default: speichern
       selector:
         select:
-          options: ["speichern", "neu", "zugestellt", "nicht_zugestellt", "ausblenden", "einblenden", "zuruecksetzen", "loeschen"]
+          options: ["speichern", "neu", "zugestellt", "nicht_zugestellt", "ausblenden", "einblenden", "zuruecksetzen", "loeschen",
+                    "ankuendigung_erledigt", "ankuendigung_offen", "ankuendigung_frist"]
     art:
       selector:
         select:
@@ -156,6 +161,17 @@ lieferung:
       selector:
         text:
     notiz:
+      selector:
+        text:
+    zeitraum_von:
+      example: "2026-12-15"
+      selector:
+        text:
+    zeitraum_bis:
+      example: "2027-03-14"
+      selector:
+        text:
+    sendungsnr:
       selector:
         text:
 
@@ -194,8 +210,12 @@ rezept:
       default: verschickt
       selector:
         select:
-          options: ["verschickt", "offen"]
+          options: ["verschickt", "offen", "termin"]
     am:
+      selector:
+        text:
+    bis:
+      example: "2027-08-14"
       selector:
         text:
 

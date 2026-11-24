@@ -21,7 +21,7 @@
  *   titel: ""
  *   tab: sensoren | lieferungen | reklamationen
  */
-const DXK_VERSION = "1.2.1";
+const DXK_VERSION = "1.2.2";
 const WT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const NB = " ";
 const TABS = [
@@ -819,10 +819,14 @@ function lieferungForm(d, m) {
   const arten = ["quartal", "ersatz", "shop", "sonstige"].concat(neu ? [] : ["unbekannt"]);
   return `${dKopf(neu ? "Lieferung eintragen" : "Lieferung korrigieren", d)}
 <div class="inhalt">
+${d.hinweis ? `<div class="frage">${icon("mdi:information-outline")}<span>${esc(d.hinweis)}</span></div>` : ""}
 ${feld("Art", chips("art", arten, f.art, { quartal: "Quartal", ersatz: "Ersatz", shop: "Webshop", sonstige: "Sonstige", unbekannt: "unklar" }))}
 ${feld("Anzahl", eingabe("anzahl", f.anzahl, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 60 }), "Sensoren in diesem Paket")}
 ${feld("Modell", chips("modell", modelle, f.modell))}
+${feld("Versendet am", eingabe("versendet", f.versendet, { type: "datetime-local", cls: "mittel2" }), neu ? "" : "leer = laut Mail")}
 ${feld("Zugestellt am", eingabe("zugestellt_am", f.zugestellt_am, { type: "datetime-local", cls: "mittel2" }), neu ? "" : "leer = laut DHL")}
+${f.art === "quartal" ? feld("Versorgungszeitraum", `<div class="von-bis">${eingabe("zeitraum_von", f.zeitraum_von, { type: "date", cls: "mittel2" })}<span>bis</span>${eingabe("zeitraum_bis", f.zeitraum_bis, { type: "date", cls: "mittel2" })}</div>`, neu ? "" : "leer = laut Mail") : ""}
+${feld("Sendungsnummer", eingabe("sendungsnr", f.sendungsnr, { mode: "numeric", ph: "DHL-Sendungsnummer" }), neu ? "" : "leer = laut Mail")}
 ${feld("Notiz", textfeld("notiz", f.notiz))}
 ${fehlerZeile(d)}
 </div>
@@ -842,7 +846,9 @@ function fallAnsicht(d, m) {
 <div class="inhalt">
 ${wert("Status", `<span class="badge ${fallCls(f)}">${esc(fallText(f, tz))}</span>`, f.historisch ? "vor Beginn der Bestandsführung – keine Erinnerung" : "")}
 ${wert("Eingereicht", esc(tagZeit(f.datum, tz, m.heute)), karte ? "aus der Karte (ohne Support-Mail)" : f.nummern && f.nummern.length > 1 ? `Fallnummern ${esc(f.nummern.join(", "))} – vermutlich doppelt abgeschickt` : "")}
-${wert("Dexcom-Antwort", antwort ? esc(antwort) + (f.antwort_datum ? ` · ${esc(datumText(f.antwort_datum, tz))}` : "") : `<span class="klein">keine Mail</span>`)}
+${karte ? wert("Dexcom-Antwort", antwort ? esc(antwort) : `<span class="klein">keine Mail</span>`)
+    : feld("Dexcom-Antwort", `<select data-f="antwort" class="voll">${[["mail", "wie aus den Mails"], ["keine", "keine Antwort"], ["ersatz", "Ersatz verschickt"], ["kulanz", "Ersatz aus Kulanz"], ["abgelehnt", "abgelehnt"], ["info", "Antwort ohne Ersatz-Zusage"]].map(([v, t]) => `<option value="${v}"${v === (d.f.antwort ?? (f.antwort_korrigiert ? f.antwort || "keine" : "mail")) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`,
+      f.antwort_korrigiert ? "von Hand geändert" : antwort ? `laut Mail: ${esc(antwort)}${f.antwort_datum ? ` · ${esc(datumText(f.antwort_datum, tz))}` : ""}` : "keine Antwort-Mail erkannt")}
 ${wert("Ersatzpaket", L ? `${esc(LIEF_STATUS[L.status] || L.status)}${L.zugestellt_am ? " " + esc(datumText(L.zugestellt_am, tz)) : ""}` : f.ersatz_erhalten_am ? "erhalten " + esc(datumText(f.ersatz_erhalten_am, tz)) + " (von Hand)" : `<span class="klein">nicht erkannt</span>`)}
 ${karte ? wert("Sensor", s ? esc(`${s.modell} vom ${datumText(s.gesetzt, tz)}`) : "") : feld("Sensor", auswahl)}
 ${karte ? "" : feld("Notiz", textfeld("notiz", d.f.notiz ?? f.notiz ?? ""))}
@@ -865,13 +871,21 @@ function naechsteAnsicht(d, m) {
     inhalt = `${wert("Status", `<span class="badge ${n.status === "ueberfaellig" ? "rot" : ""}">${n.status === "ueberfaellig" ? `überfällig seit ${n.tage_ueber} ${n.tage_ueber === 1 ? "Tag" : "Tagen"}` : "angekündigt"}</span>`)}
 ${wert("Angekündigt", esc((n.angekuendigt || []).map((x) => datumText(x, tz, false)).join(", ")), "Mails „Information zu Ihrer Versorgung“")}
 ${wert(n.vorbereitung_ab ? "Vorbereitung ab" : "Versand geplant", esc(datumText(n.vorbereitung_ab || n.versand_geplant, tz)))}
-${wert("Zustellung bis", esc(datumText(n.frist, tz)), n.vorbereitung_ab ? "Dexcom: „bis zu zwei Wochen“ ab Vorbereitung" : "geplanter Versand + einige Tage")}
+${d.frist ? feld("Zustellung bis", eingabe("frist", d.f.frist, { type: "date", cls: "mittel2" }), "z. B. nach Auskunft von Dexcom")
+    : wert("Zustellung bis", esc(datumText(n.frist, tz)), n.frist_manuell ? "von Hand geändert" : n.vorbereitung_ab ? "Dexcom: „bis zu zwei Wochen“ ab Vorbereitung" : "geplanter Versand + einige Tage")}
 ${n.status === "ueberfaellig" ? `<div class="frage">${icon("mdi:phone-outline")}<span>Noch keine Versandbestätigung. Dexcom-Kundenservice: <a href="tel:${TEL_KUNDE}">0800 724 6447</a> (Mo–Fr 8–17 Uhr) oder de.info@dexcom.com.</span></div>` : ""}`;
   } else if (unterwegs.length) {
     const L = unterwegs[0];
     inhalt = `${wert("Status", esc(LIEF_STATUS[L.status] || L.status))}${wert("Erwartet", L.erwartet ? esc(datumText(L.erwartet, tz)) : "")}${wert("Sendung", L.sendungsnr ? `<a href="${esc(dhlLink(L.sendungsnr))}" target="_blank" rel="noreferrer">${esc(L.sendungsnr)}</a>` : "")}`;
   } else {
     inhalt = `<p>Gerade ist keine Lieferung angekündigt oder unterwegs. Sobald Dexcom die nächste ankündigt („Information zu Ihrer Versorgung“), steht sie hier.</p>`;
+  }
+  if (n && d.frist) {
+    inhalt += `<div class="aktionen">${knopf("naechste-frist-speichern", "Frist speichern", "haupt", d, "mdi:content-save-outline")}${n.frist_manuell ? knopf("naechste-frist-reset", "Wie aus der Mail", "", d) : ""}${knopf("naechste-frist-ab", "Abbrechen", "", d)}</div>`;
+  } else if (n) {
+    inhalt += `<div class="aktionen">${knopf("naechste-da", "Ist angekommen", "haupt", d, "mdi:package-variant-closed-check")}${knopf("naechste-frist", "Frist ändern", "", d, "mdi:calendar-edit")}${knopf("naechste-erledigt", "Ausblenden", "", d, "mdi:eye-off-outline")}</div>`;
+  } else if (m.daten && m.daten.naechste_ausgeblendet) {
+    inhalt += `<div class="aktionen">${knopf("naechste-offen", "Ausgeblendete Ankündigung zeigen", "", d, "mdi:eye-outline")}</div>`;
   }
   return `${dKopf("Nächste Lieferung", d)}
 <div class="inhalt">${inhalt}${fehlerZeile(d)}</div>
@@ -881,12 +895,16 @@ ${dFuss(knopf("gmail-dlg", "Im Postfach nachsehen", "", d, "mdi:email-search-out
 function rezeptAnsicht(d, m) {
   const rz = m.daten && m.daten.folgerezept;
   const tz = m.tz;
-  if (!rz) return `${dKopf("Folgerezept", d)}<div class="inhalt"><p>Aus den Dexcom-Mails ist noch kein Termin bekannt.</p></div>${dFuss("", knopf("zu", "Schließen", "haupt", d))}`;
+  const terminFeld = feld("Im Original bis", eingabe("bis", d.f.bis ?? (rz ? rz.bis : ""), { type: "date", cls: "mittel2" }), "Termin aus dem Rezept bzw. der Dexcom-Mail");
+  if (!rz) return `${dKopf("Folgerezept", d)}<div class="inhalt"><p>Aus den Dexcom-Mails ist noch kein Termin bekannt – du kannst ihn hier eintragen.</p>${terminFeld}${fehlerZeile(d)}</div>${dFuss(knopf("zu", "Schließen", "", d), knopf("rezept-termin", "Termin speichern", "haupt", d, "mdi:content-save-outline"))}`;
   return `${dKopf("Folgerezept", d)}
 <div class="inhalt">
-${wert("Im Original bis", `<b>${esc(datumText(rz.bis, tz))}</b>`, `aus der Dexcom-Mail vom ${esc(datumText(rz.aus_mail, tz))}`)}
+${d.termin ? terminFeld : wert("Im Original bis", `<b>${esc(datumText(rz.bis, tz))}</b>`, rz.manuell ? "von Hand eingetragen" : `aus der Dexcom-Mail vom ${esc(datumText(rz.aus_mail, tz))}`)}
+${d.termin ? `<div class="aktionen">${knopf("rezept-termin", "Termin speichern", "haupt", d, "mdi:content-save-outline")}${rz.manuell ? knopf("rezept-termin-reset", "Wie aus den Mails", "", d) : ""}${knopf("rezept-termin-ab", "Abbrechen", "", d)}</div>` : ""}
 ${wert("Status", rz.verschickt ? `verschickt am ${esc(datumText(rz.verschickt_am, tz))} ✓` : "noch nicht verschickt")}
-<div class="info klein">${icon("mdi:information-outline")}<span>Dexcom braucht das Rezept im Original per Post (Dexcom Deutschland GmbH, Haifa-Allee 2, 55128 Mainz). Zu früh eingereichte Rezepte verlieren ihre Gültigkeit.</span></div>
+${!rz.verschickt && !d.termin ? feld("Verschickt am", eingabe("verschickt_am", d.f.verschickt_am ?? heuteIn(tz), { type: "date", cls: "mittel2" })) : ""}
+${!d.termin ? `<div class="aktionen">${knopf("rezept-termin-form", "Termin ändern", "", d, "mdi:calendar-edit")}</div>` : ""}
+<div class="info klein">${icon("mdi:information-outline")}<span>Dexcom braucht das Rezept im Original per Post (Dexcom Deutschland GmbH, Rotterdamer Platz 10, 55120 Mainz – Anschrift laut Dexcom, Stand November 2026). Zu früh eingereichte Rezepte verlieren ihre Gültigkeit.</span></div>
 ${fehlerZeile(d)}
 </div>
 ${dFuss(rz.verschickt ? knopf("rezept-offen", "Doch nicht verschickt", "", d) : "", rz.verschickt ? knopf("zu", "Schließen", "haupt", d) : knopf("zu", "Schließen", "", d) + knopf("rezept-verschickt", "Rezept verschickt", "haupt", d, "mdi:email-fast-outline"))}`;
@@ -1065,6 +1083,8 @@ input::placeholder, textarea::placeholder { color: var(--secondary-text-color); 
 .schmal { width: 5.2em; }
 .mittel { width: 8em; }
 .mittel2 { width: 13.5em; max-width: 100%; }
+.von-bis { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex: 1; }
+.von-bis .mittel2 { width: 10.5em; }
 .neben { color: var(--secondary-text-color); font-size: .8em; flex-basis: 100%; margin: -4px 0 0 calc(7.2em + 8px); line-height: 1.35; }
 .schalter { display: flex; align-items: center; gap: 10px; margin: 12px 0; cursor: pointer; flex-wrap: wrap; }
 .schalter small { color: var(--secondary-text-color); font-size: .8em; flex-basis: 100%; margin-left: 30px; margin-top: -6px; line-height: 1.35; }
@@ -1367,11 +1387,40 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       });
     }
 
+    _naechsteDa() {
+      const daten = this._daten || {};
+      const e = daten.einstellungen || {};
+      const tz = this._tz();
+      const grenze = Date.now() - 30 * 86400000;
+      const unklar = (daten.lieferungen || [])
+        .filter((L) => !L.manuell && !L.aus && L.art === "unbekannt" && Date.parse(L.zugestellt_am || L.versendet || "") > grenze)
+        .sort((x, y) => String(y.versendet || "").localeCompare(String(x.versendet || "")))[0];
+      if (unklar) {
+        const f = this._liefFelder(unklar);
+        Object.assign(f, { art: "quartal", anzahl: String(e.quartal_anzahl ?? 9), modell: e.modell_lieferung || "G7" });
+        if (!f.zugestellt_am) f.zugestellt_am = jetztEingabe(tz);
+        this._dlg = {
+          art: "lieferung", id: unklar.id, e: unklar, schritt: "form", busy: false, fehler: "", f, orig: this._liefFelder(unklar),
+          hinweis: `Die DHL-Sendung vom ${datumText(unklar.versendet || unklar.zugestellt_am, tz)} hatte keine Versandmail von Dexcom – als diese Lieferung zählen? Anzahl und Modell prüfen und speichern.`,
+          meldung: "Als Lieferung gezählt.",
+        };
+        return this._dialogRender(true);
+      }
+      this._dlg = {
+        art: "lieferung-neu", id: "", schritt: "form", busy: false, fehler: "",
+        f: { art: "quartal", anzahl: String(e.quartal_anzahl ?? 9), modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(tz), versendet: "", zeitraum_von: "", zeitraum_bis: "", sendungsnr: "", notiz: "" },
+        orig: {}, hinweis: "Die angekündigte Lieferung ist da, aber ohne Mail? Hier eintragen – dann zählt sie zum Bestand und die Ankündigung ist erledigt.",
+        meldung: "Lieferung eingetragen – Ankündigung erledigt.",
+      };
+      return this._dialogRender(true);
+    }
+
     _dialogLieferungNeu() {
       const e = (this._daten && this._daten.einstellungen) || {};
       this._dialogOeffnen({
         art: "lieferung-neu", id: "", schritt: "form",
-        f: { art: "ersatz", anzahl: "1", modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(this._tz()), notiz: "" },
+        f: { art: "ersatz", anzahl: "1", modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(this._tz()), versendet: "", zeitraum_von: "", zeitraum_bis: "", sendungsnr: "", notiz: "" },
+        orig: {}, hinweis: "",
       });
     }
 
@@ -1501,7 +1550,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
           return this._ausfuehren("dexcom_reklamation", { sensor_id: d.id, aktion: "aufheben" }, "Reklamation entfernt.", true);
         case "lief-form": {
           const L = ((this._daten && this._daten.lieferungen) || []).find((x) => x.id === d.id) || d.e;
-          return neu("form", { f: { art: L.art, anzahl: String(L.anzahl ?? ""), modell: L.modell || ((this._daten.einstellungen || {}).modell_lieferung || "G7"), zugestellt_am: L.zugestellt_am && !L.zugestellt_angenommen ? alsEingabe(L.zugestellt_am, this._tz()) : "", notiz: L.notiz || "" } });
+          return neu("form", { hinweis: "", f: this._liefFelder(L), orig: this._liefFelder(L) });
         }
         case "lief-speichern":
           return this._liefSpeichern();
@@ -1546,7 +1595,44 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         case "gmail-neu":
           return this._gmail(true, true);
         case "rezept-verschickt":
-          return this._ausfuehren("dexcom_rezept", { aktion: "verschickt" }, "Folgerezept als verschickt vermerkt – keine Erinnerung mehr.");
+          return this._ausfuehren("dexcom_rezept", { aktion: "verschickt", ...(d.f.verschickt_am ? { am: d.f.verschickt_am } : {}) }, "Folgerezept als verschickt vermerkt – keine Erinnerung mehr.");
+        case "rezept-termin-form":
+          d.termin = true;
+          return this._dialogRender(false);
+        case "rezept-termin-ab":
+          d.termin = false;
+          delete d.f.bis;
+          return this._dialogRender(false);
+        case "rezept-termin":
+        case "rezept-termin-reset": {
+          const bis = a === "rezept-termin-reset" ? "" : String(d.f.bis ?? ((this._daten && this._daten.folgerezept) || {}).bis ?? "");
+          if (a === "rezept-termin" && !bis) return this._dlgFehler("Bitte ein Datum angeben.");
+          d.termin = false;
+          delete d.f.bis;
+          return this._ausfuehren("dexcom_rezept", { aktion: "termin", bis }, bis ? "Termin gespeichert." : "Termin wieder aus den Mails.", true);
+        }
+        case "naechste-da":
+          return this._naechsteDa();
+        case "naechste-frist": {
+          const n = (this._daten && this._daten.naechste) || {};
+          d.frist = true;
+          d.f.frist = n.frist || "";
+          return this._dialogRender(false);
+        }
+        case "naechste-frist-ab":
+          d.frist = false;
+          return this._dialogRender(false);
+        case "naechste-frist-speichern":
+        case "naechste-frist-reset": {
+          const am = a === "naechste-frist-reset" ? "" : String(d.f.frist || "");
+          if (a === "naechste-frist-speichern" && !am) return this._dlgFehler("Bitte ein Datum angeben.");
+          d.frist = false;
+          return this._ausfuehren("dexcom_lieferung", { aktion: "ankuendigung_frist", am }, am ? "Frist geändert." : "Frist wieder wie aus der Mail.", true);
+        }
+        case "naechste-erledigt":
+          return this._ausfuehren("dexcom_lieferung", { aktion: "ankuendigung_erledigt" }, "Ankündigung ausgeblendet.", true);
+        case "naechste-offen":
+          return this._ausfuehren("dexcom_lieferung", { aktion: "ankuendigung_offen" }, "Ankündigung wird wieder gezeigt.", true);
         case "rezept-offen":
           return this._ausfuehren("dexcom_rezept", { aktion: "offen" }, "Folgerezept wieder offen.", true);
         case "inventur":
@@ -1772,18 +1858,37 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       return this._ausfuehren("dexcom_reklamation", daten, "Reklamation gespeichert – ich achte auf das Ersatzpaket.", true);
     }
 
+    _liefFelder(L) {
+      const tz = this._tz();
+      return {
+        art: L.art, anzahl: String(L.anzahl ?? ""), modell: L.modell || ((this._daten.einstellungen || {}).modell_lieferung || "G7"),
+        zugestellt_am: L.zugestellt_am && !L.zugestellt_angenommen ? alsEingabe(L.zugestellt_am, tz) : "",
+        versendet: L.versendet ? alsEingabe(L.versendet, tz) : "", zeitraum_von: L.zeitraum_von || "", zeitraum_bis: L.zeitraum_bis || "",
+        sendungsnr: L.sendungsnr || "", notiz: L.notiz || "",
+      };
+    }
+
     async _liefSpeichern() {
       const d = this._dlg;
       const f = d.f;
       const anz = String(f.anzahl ?? "").trim();
       if (anz !== "" && !/^\d+$/.test(anz)) return this._dlgFehler("Anzahl bitte als ganze Zahl.");
+      if ((f.zeitraum_von || "") && (f.zeitraum_bis || "") && f.zeitraum_bis < f.zeitraum_von) return this._dlgFehler("Der Versorgungszeitraum endet vor seinem Beginn.");
+      const zusatz = {};
+      for (const k of ["versendet", "zeitraum_von", "zeitraum_bis", "sendungsnr"]) {
+        if (k.startsWith("zeitraum") && f.art !== "quartal" && !(d.orig || {})[k]) continue;
+        const wert = k === "versendet" ? eingabeZuText(f[k]) : String(f[k] || "").trim();
+        const alt = k === "versendet" ? eingabeZuText((d.orig || {})[k]) : String((d.orig || {})[k] || "").trim();
+        if (!d.id ? wert !== "" : wert !== alt) zusatz[k] = wert;
+      }
       if (!d.id) {
         if (anz === "") return this._dlgFehler("Bitte die Anzahl angeben.");
-        return this._ausfuehren("dexcom_lieferung", { aktion: "neu", art: f.art, anzahl: Number(anz), modell: f.modell, zugestellt_am: eingabeZuText(f.zugestellt_am), notiz: f.notiz }, "Lieferung eingetragen.");
+        const daten = { aktion: "neu", art: f.art, anzahl: Number(anz), modell: f.modell, zugestellt_am: eingabeZuText(f.zugestellt_am), notiz: f.notiz, ...zusatz };
+        return this._ausfuehren("dexcom_lieferung", daten, d.meldung || "Lieferung eingetragen.");
       }
-      const daten = { id: d.id, aktion: "speichern", art: f.art, modell: f.modell, notiz: f.notiz, zugestellt_am: eingabeZuText(f.zugestellt_am) };
+      const daten = { id: d.id, aktion: "speichern", art: f.art, modell: f.modell, notiz: f.notiz, zugestellt_am: eingabeZuText(f.zugestellt_am), ...zusatz };
       if (anz !== "") daten.anzahl = Number(anz);
-      return this._ausfuehren("dexcom_lieferung", daten, "Lieferung korrigiert.", true);
+      return this._ausfuehren("dexcom_lieferung", daten, d.meldung || "Lieferung korrigiert.", true);
     }
 
     async _fallAktion(aktion, meldung) {
@@ -1807,6 +1912,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         }
         if (d.f.notiz !== undefined && d.f.notiz !== (f.notiz || "")) {
           const r = await this._dienst("dexcom_fall", { fall_id: f.id, aktion: "notiz", notiz: d.f.notiz });
+          if (r && r.ok === false) throw new Error(r.fehler);
+        }
+        const antwortAlt = f.antwort_korrigiert ? f.antwort || "keine" : "mail";
+        if (d.f.antwort !== undefined && d.f.antwort !== antwortAlt) {
+          const r = await this._dienst("dexcom_fall", { fall_id: f.id, aktion: "antwort", antwort: d.f.antwort });
           if (r && r.ok === false) throw new Error(r.fehler);
         }
         this._dialogZu();
