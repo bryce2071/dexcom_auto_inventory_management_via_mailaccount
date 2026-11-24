@@ -1,0 +1,15 @@
+{
+  "domain": "dexcom_bestand",
+  "name": "Dexcom Sensorbestand",
+  "after_dependencies": ["imap", "mobile_app", "notify"],
+  "codeowners": ["@bryce2071"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http", "panel_custom"],
+  "documentation": "https://github.com/bryce2071/dexcom_auto_inventory_management_via_mailaccount",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/bryce2071/dexcom_auto_inventory_management_via_mailaccount/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "1.2.0"
+}

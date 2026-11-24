@@ -1,0 +1,248 @@
+liste:
+
+sensor:
+  fields:
+    id:
+      example: s1a2b3c4d
+      selector:
+        text:
+    modell:
+      example: G7
+      selector:
+        select:
+          options: ["G6", "G7", "G7 15 Tage", "ONE+"]
+    ref:
+      selector:
+        text:
+    lot:
+      selector:
+        text:
+    hergestellt:
+      example: "2026-01-15"
+      selector:
+        text:
+    verwendbar_bis:
+      example: "2027-01-31"
+      selector:
+        text:
+    gtin:
+      selector:
+        text:
+    code:
+      selector:
+        text:
+    sn:
+      selector:
+        text:
+    gesetzt:
+      example: "2026-03-01 20:30"
+      selector:
+        text:
+    entfernt:
+      selector:
+        text:
+    notiz:
+      selector:
+        text:
+          multiline: true
+    quelle:
+      selector:
+        select:
+          options: ["foto", "hand", "automatisch", "verlauf"]
+    aus_bestand:
+      selector:
+        boolean:
+    foto:
+      selector:
+        text:
+
+foto:
+  fields:
+    aktion:
+      required: true
+      default: hochladen
+      selector:
+        select:
+          options: ["hochladen", "holen", "loeschen"]
+    daten:
+      selector:
+        text:
+    foto_id:
+      selector:
+        text:
+    sensor_id:
+      selector:
+        text:
+
+reklamation:
+  fields:
+    sensor_id:
+      required: true
+      selector:
+        text:
+    aktion:
+      default: setzen
+      selector:
+        select:
+          options: ["setzen", "aufheben", "ersatz_erhalten", "ersatz_offen", "erledigt", "wieder_offen"]
+    am:
+      selector:
+        text:
+    ausfall_am:
+      selector:
+        text:
+    fall:
+      example: 260101-000123
+      selector:
+        text:
+    grund:
+      selector:
+        text:
+    notiz:
+      selector:
+        text:
+
+fall:
+  fields:
+    fall_id:
+      required: true
+      selector:
+        text:
+    aktion:
+      required: true
+      selector:
+        select:
+          options: ["zuordnen", "ersatz_erhalten", "erledigt", "offen", "notiz"]
+    sensor_id:
+      selector:
+        text:
+    am:
+      selector:
+        text:
+    notiz:
+      selector:
+        text:
+
+lieferung:
+  fields:
+    id:
+      selector:
+        text:
+    aktion:
+      default: speichern
+      selector:
+        select:
+          options: ["speichern", "neu", "zugestellt", "nicht_zugestellt", "ausblenden", "einblenden", "zuruecksetzen", "loeschen"]
+    art:
+      selector:
+        select:
+          options: ["quartal", "ersatz", "shop", "unbekannt", "sonstige"]
+    anzahl:
+      selector:
+        number:
+          min: 0
+          max: 60
+          mode: box
+    modell:
+      selector:
+        text:
+    zugestellt_am:
+      selector:
+        text:
+    versendet:
+      selector:
+        text:
+    am:
+      selector:
+        text:
+    notiz:
+      selector:
+        text:
+
+loeschen:
+  fields:
+    sensor_id:
+      required: true
+      selector:
+        text:
+    wiederherstellen:
+      selector:
+        boolean:
+
+inventur:
+  fields:
+    bestand:
+      example: '{"G6": 0, "G7": 9}'
+      selector:
+        object:
+    modell:
+      selector:
+        text:
+    anzahl:
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: box
+    zeit:
+      selector:
+        text:
+
+rezept:
+  fields:
+    aktion:
+      default: verschickt
+      selector:
+        select:
+          options: ["verschickt", "offen"]
+    am:
+      selector:
+        text:
+
+einstellungen:
+  fields:
+    einstellungen:
+      required: true
+      selector:
+        object:
+
+gmail:
+  fields:
+    neu:
+      selector:
+        boolean:
+
+pruefen:
+  fields:
+    probelauf:
+      default: true
+      selector:
+        boolean:
+
+test_push:
+
+mails:
+  fields:
+    suche:
+      selector:
+        text:
+    max_n:
+      default: 40
+      selector:
+        number:
+          min: 1
+          max: 200
+          mode: box
+    text_len:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 20000
+          mode: box
+    uids:
+      selector:
+        text:
+    erkennen:
+      selector:
+        boolean:

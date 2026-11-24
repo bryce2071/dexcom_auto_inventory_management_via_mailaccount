@@ -1,0 +1,403 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Dexcom sensor stock",
+        "description": "Stock, deliveries and complaints of your Dexcom sensors. Deliveries, shipping, DHL notices and support cases are read directly from your mailbox – read-only, nothing is marked, moved or deleted. The user interface is German. {daten}",
+        "data": {
+          "mail": "Mailbox",
+          "mails_ab": "Consider mails from"
+        },
+        "data_description": {
+          "mail": "An existing IMAP integration, your own credentials (e.g. Gmail with an app password) or no mailbox.",
+          "mails_ab": "Older mails are not read."
+        }
+      },
+      "zugang": {
+        "title": "Mailbox credentials",
+        "description": "Gmail: server imap.gmail.com, port 993 and an **app password**. The login is checked right away.",
+        "data": {
+          "server": "IMAP server",
+          "port": "Port",
+          "benutzer": "User (e-mail address)",
+          "passwort": "Password / app password",
+          "ordner": "Folder (optional)"
+        },
+        "data_description": {
+          "ordner": "Leave empty: Gmail “All Mail”, otherwise the inbox."
+        }
+      },
+      "sensoren": {
+        "title": "Sensor changes and notifications",
+        "description": "{cgm_hinweis}{notify_hinweis}",
+        "data": {
+          "sensorende": "Sensor end (CGM integration)",
+          "notify": "Phone for notifications",
+          "seitenleiste": "Sidebar entry",
+          "titel": "Sidebar title"
+        },
+        "data_description": {
+          "sensorende": "Timestamp sensor with the end of the running sensor session.",
+          "notify": "notify service of the phone (mobile_app_…). Empty = no push notifications."
+        }
+      },
+      "bestand": {
+        "title": "Initial stock",
+        "description": "How many unused sensors do you have now?",
+        "data": {
+          "bestand_g6": "G6 sensors",
+          "bestand_g7": "G7 sensors",
+          "modell_lieferung": "Model of new deliveries",
+          "quartal_anzahl": "Sensors per quarterly delivery"
+        }
+      }
+    },
+    "error": {
+      "pyscript_aktiv": "The pyscript version (pyscript/dexcom.py) is still running. Please remove it first.",
+      "anmeldung": "Login failed – check user and password (Gmail: use an app password).",
+      "verbindung": "Server not reachable or folder missing."
+    },
+    "abort": {
+      "already_configured": "Already configured.",
+      "single_instance_allowed": "Already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dexcom sensor stock",
+        "description": "{cgm_hinweis}{notify_hinweis}",
+        "data": {
+          "mail": "Mailbox",
+          "mails_ab": "Consider mails from",
+          "sensorende": "Sensor end (CGM integration)",
+          "notify": "Phone for notifications",
+          "seitenleiste": "Sidebar entry",
+          "titel": "Sidebar title",
+          "link": "Page opened by notifications"
+        }
+      },
+      "zugang": {
+        "title": "Mailbox credentials",
+        "description": "Leave the password empty to keep the stored one.",
+        "data": {
+          "server": "IMAP server",
+          "port": "Port",
+          "benutzer": "User (e-mail address)",
+          "passwort": "Password / app password",
+          "ordner": "Folder (optional)"
+        }
+      }
+    },
+    "error": {
+      "anmeldung": "Login failed.",
+      "verbindung": "Server not reachable or folder missing."
+    }
+  },
+  "services": {
+    "liste": {
+      "name": "Liste",
+      "description": "Liefert Sensoren, Lieferungen, Reklamationen, Bestand und Einstellungen (für die Karte)."
+    },
+    "sensor": {
+      "name": "Sensor eintragen oder ändern",
+      "description": "Neuer Sensor (ohne ID) – z. B. mit den Daten vom Etikett – oder Änderung (mit ID). Ohne ID wird ein automatisch erkannter Eintrag (±12 h, ohne LOT) ergänzt statt doppelt angelegt. Ohne Setzzeit gilt jetzt.",
+      "fields": {
+        "id": {
+          "name": "ID",
+          "description": "Sensor-ID (nur zum Ändern)."
+        },
+        "modell": {
+          "name": "Modell",
+          "description": "G6, G7, G7 15 Tage oder ONE+."
+        },
+        "ref": {
+          "name": "REF / PN",
+          "description": "REF- bzw. PN-Nummer vom Etikett."
+        },
+        "lot": {
+          "name": "LOT",
+          "description": "Charge."
+        },
+        "hergestellt": {
+          "name": "Hergestellt",
+          "description": "Herstellungsdatum (Fabrik-Symbol), JJJJ-MM-TT."
+        },
+        "verwendbar_bis": {
+          "name": "Verwendbar bis",
+          "description": "Sanduhr-Symbol, JJJJ-MM-TT."
+        },
+        "gtin": {
+          "name": "GTIN",
+          "description": "Aus dem Barcode, (01)…"
+        },
+        "code": {
+          "name": "Sensor-Code",
+          "description": "4-stellig."
+        },
+        "sn": {
+          "name": "Seriennummer",
+          "description": "Transmitter-SN (G6) bzw. Seriennummer (G7)."
+        },
+        "gesetzt": {
+          "name": "Gesetzt am",
+          "description": "Z. B. 2026-03-01 20:30 oder 01.03.26 20:30."
+        },
+        "entfernt": {
+          "name": "Entfernt am",
+          "description": "Nur bei Ausfall oder Nachtrag."
+        },
+        "notiz": {
+          "name": "Notiz",
+          "description": "Freitext."
+        },
+        "quelle": {
+          "name": "Quelle",
+          "description": "foto, hand, automatisch oder verlauf."
+        },
+        "aus_bestand": {
+          "name": "Aus dem Bestand",
+          "description": "Aus dem eigenen Bestand genommen (Standard ja)."
+        },
+        "foto": {
+          "name": "Foto",
+          "description": "Foto-ID aus dem Dienst „Etikett-Foto“ (hochladen)."
+        }
+      }
+    },
+    "foto": {
+      "name": "Etikett-Foto",
+      "description": "Foto hochladen (Base64-JPEG, liefert eine Foto-ID), holen (liefert Base64) oder löschen. Fotos werden nach der eingestellten Zeit (Standard 7 Tage) gelöscht.",
+      "fields": {
+        "aktion": {
+          "name": "Aktion",
+          "description": "hochladen, holen oder loeschen."
+        },
+        "daten": {
+          "name": "Bild",
+          "description": "Bild als Base64 (bei hochladen)."
+        },
+        "foto_id": {
+          "name": "Foto-ID",
+          "description": "Bei holen und loeschen."
+        },
+        "sensor_id": {
+          "name": "Sensor",
+          "description": "Bei loeschen: alle Fotos dieses Sensors."
+        }
+      }
+    },
+    "reklamation": {
+      "name": "Reklamation",
+      "description": "Sensor als reklamiert markieren, ändern, Ersatz erhalten, abschließen oder aufheben.",
+      "fields": {
+        "sensor_id": {
+          "name": "Sensor",
+          "description": "Sensor-ID."
+        },
+        "aktion": {
+          "name": "Aktion",
+          "description": "setzen, aufheben, ersatz_erhalten, ersatz_offen, erledigt, wieder_offen."
+        },
+        "am": {
+          "name": "Am",
+          "description": "Reklamiert am bzw. Ersatz erhalten am (Standard jetzt)."
+        },
+        "ausfall_am": {
+          "name": "Ausgefallen am",
+          "description": "Wann der Sensor ausgefallen ist."
+        },
+        "fall": {
+          "name": "Fallnummer",
+          "description": "Fall-Referenznummer von Dexcom."
+        },
+        "grund": {
+          "name": "Grund",
+          "description": "Z. B. Sensorfehler, Pflaster gelöst, Signalverlust."
+        },
+        "notiz": {
+          "name": "Notiz",
+          "description": "Freitext."
+        }
+      }
+    },
+    "fall": {
+      "name": "Support-Fall",
+      "description": "Fall aus den Mails einem Sensor zuordnen, Ersatz als erhalten markieren, abschließen oder wieder öffnen.",
+      "fields": {
+        "fall_id": {
+          "name": "Fall",
+          "description": "Fall-Referenznummer."
+        },
+        "aktion": {
+          "name": "Aktion",
+          "description": "zuordnen, ersatz_erhalten, erledigt, offen, notiz."
+        },
+        "sensor_id": {
+          "name": "Sensor",
+          "description": "Bei zuordnen; leer = Zuordnung lösen."
+        },
+        "am": {
+          "name": "Am",
+          "description": "Datum, z. B. Ersatz erhalten am."
+        },
+        "notiz": {
+          "name": "Notiz",
+          "description": "Freitext."
+        }
+      }
+    },
+    "lieferung": {
+      "name": "Lieferung",
+      "description": "Lieferung aus den Mails korrigieren (Art, Anzahl, Modell, zugestellt) oder von Hand eintragen (ohne ID).",
+      "fields": {
+        "id": {
+          "name": "ID",
+          "description": "Lieferung (leer = neue von Hand)."
+        },
+        "aktion": {
+          "name": "Aktion",
+          "description": "speichern, neu, zugestellt, nicht_zugestellt, ausblenden, einblenden, zuruecksetzen, loeschen."
+        },
+        "art": {
+          "name": "Art",
+          "description": "quartal, ersatz, shop, unbekannt oder sonstige."
+        },
+        "anzahl": {
+          "name": "Anzahl",
+          "description": "Sensoren im Paket."
+        },
+        "modell": {
+          "name": "Modell",
+          "description": "G6, G7, G7 15 Tage oder ONE+."
+        },
+        "zugestellt_am": {
+          "name": "Zugestellt am",
+          "description": "Datum und Uhrzeit."
+        },
+        "versendet": {
+          "name": "Versendet am",
+          "description": "Datum und Uhrzeit."
+        },
+        "am": {
+          "name": "Am",
+          "description": "Bei zugestellt: wann."
+        },
+        "notiz": {
+          "name": "Notiz",
+          "description": "Freitext."
+        }
+      }
+    },
+    "loeschen": {
+      "name": "Sensor löschen",
+      "description": "Verschiebt einen Sensor-Eintrag in den Papierkorb (oder holt ihn zurück).",
+      "fields": {
+        "sensor_id": {
+          "name": "Sensor",
+          "description": "Sensor-ID."
+        },
+        "wiederherstellen": {
+          "name": "Wiederherstellen",
+          "description": "Aus dem Papierkorb zurückholen."
+        }
+      }
+    },
+    "inventur": {
+      "name": "Inventur",
+      "description": "Setzt den Bestand zu einem Zeitpunkt (Standard jetzt). Danach zählen Lieferungen (+) und gesetzte Sensoren (−) automatisch.",
+      "fields": {
+        "bestand": {
+          "name": "Bestand",
+          "description": "Je Modell als Objekt, z. B. G6: 0 und G7: 9."
+        },
+        "modell": {
+          "name": "Modell",
+          "description": "Alternativ ein Modell …"
+        },
+        "anzahl": {
+          "name": "Anzahl",
+          "description": "… mit seiner Anzahl."
+        },
+        "zeit": {
+          "name": "Zeitpunkt",
+          "description": "Zeitpunkt der Zählung."
+        }
+      }
+    },
+    "rezept": {
+      "name": "Folgerezept",
+      "description": "Folgerezept als verschickt markieren (stoppt die Erinnerung) oder wieder öffnen.",
+      "fields": {
+        "aktion": {
+          "name": "Aktion",
+          "description": "verschickt oder offen."
+        },
+        "am": {
+          "name": "Am",
+          "description": "Verschickt am (Standard jetzt)."
+        }
+      }
+    },
+    "einstellungen": {
+      "name": "Einstellungen",
+      "description": "Laufzeiten je Modell, Modell neuer Lieferungen, Anzahl je Quartal, Meldungen, Handy, Mail-Zeitraum, Fotos.",
+      "fields": {
+        "einstellungen": {
+          "name": "Einstellungen",
+          "description": "Geänderte Einstellungen als Objekt."
+        }
+      }
+    },
+    "gmail": {
+      "name": "Postfach prüfen",
+      "description": "Liest neue Dexcom-, Support- und DHL-Mails (mit „neu“ alle noch einmal).",
+      "fields": {
+        "neu": {
+          "name": "Alle neu einlesen",
+          "description": "Auch schon bekannte Mails neu lesen."
+        }
+      }
+    },
+    "pruefen": {
+      "name": "Meldungen prüfen",
+      "description": "Zeigt (Probelauf) oder sendet die jetzt fälligen Push-Meldungen.",
+      "fields": {
+        "probelauf": {
+          "name": "Probelauf",
+          "description": "Nur anzeigen, nichts senden."
+        }
+      }
+    },
+    "test_push": {
+      "name": "Test-Benachrichtigung",
+      "description": "Schickt eine Test-Benachrichtigung an das eingestellte Handy."
+    },
+    "mails": {
+      "name": "Mails erkunden",
+      "description": "Zeigt passende Mails aus dem Postfach (nur lesen); mit „erkennen“ das Ergebnis der Erkennung.",
+      "fields": {
+        "suche": {
+          "name": "Suche",
+          "description": "Gmail: Suchsyntax; andere Anbieter: zusätzlicher Suchbegriff. Leer = Standardsuche."
+        },
+        "max_n": {
+          "name": "Höchstens",
+          "description": "Anzahl Mails."
+        },
+        "text_len": {
+          "name": "Textlänge",
+          "description": "Zeichen Mailtext je Mail (0 = nur Absender, Betreff, Datum)."
+        },
+        "uids": {
+          "name": "Nur diese Mails",
+          "description": "UIDs, durch Komma getrennt."
+        },
+        "erkennen": {
+          "name": "Erkennen",
+          "description": "Statt Text die erkannten Felder zeigen."
+        }
+      }
+    }
+  }
+}
