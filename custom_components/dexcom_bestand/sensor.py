@@ -20,7 +20,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, NAME, SENSOR_BESTAND, SENSOR_ENDE, SENSOR_LIEFERUNG, SIGNAL_AKTUALISIERT, VERSION
+from .const import DOMAIN, GERAET, NAME, SENSOR_BESTAND, SENSOR_ENDE, SENSOR_LIEFERUNG, SIGNAL_AKTUALISIERT, VERSION
 from .kern import DexcomKern
 
 
@@ -39,7 +39,8 @@ class _Basis(SensorEntity):
     """Gemeinsame Grundlage: kein Abfragen, Aktualisierung über das Signal des Kerns."""
 
     _attr_should_poll = False
-    _attr_has_entity_name = False
+    # Name = Gerät („Dexcom“) + Entität („Bestand“) → „Dexcom Bestand“ (so setzt HA den Namen inzwischen immer zusammen)
+    _attr_has_entity_name = True
 
     def __init__(self, kern: DexcomKern, entry: ConfigEntry, entity_id: str, schluessel: str) -> None:
         self._kern = kern
@@ -47,7 +48,7 @@ class _Basis(SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_{schluessel}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=NAME,
+            name=GERAET,
             manufacturer=NAME,
             model="Sensorbestand",
             entry_type=DeviceEntryType.SERVICE,
@@ -65,7 +66,7 @@ class _Basis(SensorEntity):
 class BestandSensor(_Basis):
     """Sensoren im Haus (Inventur + Lieferungen − gesetzte Sensoren)."""
 
-    _attr_name = "Dexcom Bestand"
+    _attr_name = "Bestand"
     _attr_icon = "mdi:package-variant"
     _attr_native_unit_of_measurement = "Sensoren"
     _unrecorded_attributes = frozenset({"version", "aktueller_sensor", "warnungen"})
@@ -85,7 +86,7 @@ class BestandSensor(_Basis):
 class EndeSensor(_Basis):
     """Ende des aktuellen Sensors."""
 
-    _attr_name = "Dexcom Sensorende"
+    _attr_name = "Sensorende"
     _attr_icon = "mdi:timer-sand"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
@@ -105,7 +106,7 @@ class EndeSensor(_Basis):
 class LieferungSensor(_Basis):
     """Nächste Lieferung."""
 
-    _attr_name = "Dexcom Lieferung"
+    _attr_name = "Lieferung"
     _attr_icon = "mdi:truck-delivery-outline"
     _unrecorded_attributes = frozenset({"naechste", "unterwegs"})
 

@@ -21,7 +21,7 @@
  *   titel: ""
  *   tab: sensoren | lieferungen | reklamationen
  */
-const DXK_VERSION = "1.2.4";
+const DXK_VERSION = "1.2.5";
 const WT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const NB = " ";
 const TABS = [
