@@ -921,7 +921,10 @@ def _transmitter_lage(daten, lief, sens, aktuell, e, jetzt, tz):
                 s["transmitter_info"] = {"id": t["id"], "sn": t.get("sn") or ""}
     best = _transmitter_bestand(daten, lief, tz)
     g6 = [s for s in sens if s.get("modell") == "G6" and (_zeit(s.get("start") or s.get("gesetzt"), tz) or jetzt) >= jetzt - timedelta(days=120)]
-    relevant = bool(liste) or best is not None or bool(g6) or e.get("modell_lieferung") == "G6" or bool([L for L in lief if L.get("transmitter")])
+    # bei einem laufenden Sensor ohne eigenen Transmitter (G7, ONE+) ausblenden – der Transmitter steckt dort im Sensor
+    g6_aktiv = aktuell is None or aktuell.get("modell") == "G6"
+    relevant = g6_aktiv and (bool(liste) or best is not None or bool(g6) or e.get("modell_lieferung") == "G6"
+                             or bool([L for L in lief if L.get("transmitter")]))
     return {"liste": liste, "aktuell": akt, "bestand": best, "wechsel_am": wechsel, "relevant": relevant}
 
 def _bestand(daten, lief, tz):
