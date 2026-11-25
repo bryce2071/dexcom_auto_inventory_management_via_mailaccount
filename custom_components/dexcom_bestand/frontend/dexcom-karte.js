@@ -21,7 +21,7 @@
  *   titel: ""
  *   tab: sensoren | lieferungen | reklamationen
  */
-const DXK_VERSION = "1.2.2";
+const DXK_VERSION = "1.2.3";
 const WT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const NB = " ";
 const TABS = [
@@ -64,7 +64,9 @@ const MELDEN = [
   ["lieferung", "Lieferung überfällig / Bestand knapp", "9–21 Uhr, höchstens alle 3 Tage"],
   ["ersatz", "Ersatz fehlt", "nach einer Reklamation ohne Ersatzpaket"],
   ["rezept", "Folgerezept fällig", "vor dem Termin aus der Dexcom-Mail"],
+  ["transmitter", "Transmitter wechseln (G6)", "vor dem letzten Sensorstart mit dem alten und wenn keiner mehr da ist"],
 ];
+const GRUENDE_TX = ["Transmitterfehler", "Koppeln nicht möglich", "Signalverlust", "Batterie vorzeitig leer", "Beschädigt"];
 const MODELL_GTIN = { "00386270000927": "G6" };
 const GS = "\u001d";
 // GS1-Datenbezeichner auf Dexcom-Etiketten: feste Länge bzw. variabel (bis max. Zeichen)
@@ -336,6 +338,33 @@ function sensorById(daten, id) {
   return ((daten && daten.sensoren) || []).find((s) => s.id === id) || null;
 }
 
+function transmitterById(daten, id) {
+  return (((daten && daten.transmitter) || {}).liste || []).find((x) => x.id === id) || null;
+}
+
+// Sensor oder Transmitter (beide reklamierbar)
+function objektById(daten, id) {
+  return sensorById(daten, id) || transmitterById(daten, id);
+}
+
+function txName(x) {
+  return "Transmitter " + (x && x.sn ? x.sn : "ohne Nummer");
+}
+
+function ganz(x) {
+  return String(Math.round(Number(x) || 0));
+}
+
+// Status eines Transmitters (G6, Laufzeit ab Aktivierung)
+export function transmitterStatus(x) {
+  if (!x) return { text: "", cls: "" };
+  if (x.status === "laeuft") return { text: x.tag ? `Tag ${x.tag} von ${ganz(x.soll_tage || 90)}` : "läuft", cls: "ok" };
+  if (x.status === "abgelaufen") return { text: "abgelaufen", cls: "warn" };
+  if (x.status === "vorzeitig") return { text: `nur ${ganz(x.gehalten_tage)} Tage`, cls: "rot" };
+  if (x.status === "verbraucht") return { text: `${ganz(x.gehalten_tage)} Tage genutzt`, cls: "" };
+  return { text: x.status || "", cls: "" };
+}
+
 // Status eines Sensors für Liste und Kopf
 export function sensorStatus(s) {
   if (!s) return { text: "", cls: "" };
@@ -363,7 +392,7 @@ function fallCls(f) {
 
 function lieferungTitel(L, tz) {
   if (L.art === "quartal" && L.zeitraum_von) return `Quartal ${datumText(L.zeitraum_von, tz, false)}–${datumText(L.zeitraum_bis, tz)}`;
-  if (L.art === "ersatz") return "Ersatzsensor" + (L.faelle && L.faelle.length && !String(L.faelle[0]).startsWith("K-") ? ` · Fall ${L.faelle[0]}` : "");
+  if (L.art === "ersatz") return (!L.anzahl && L.transmitter ? "Ersatz-Transmitter" : "Ersatzsensor") + (L.faelle && L.faelle.length && !String(L.faelle[0]).startsWith("K-") ? ` · Fall ${L.faelle[0]}` : "");
   if (L.art === "shop") return "Webshop" + (L.bestellnr ? ` ${L.bestellnr}` : "");
   return ART_NAME[L.art] || L.art;
 }
@@ -472,18 +501,42 @@ function kachelnHtml(m) {
       if (tage <= vor) zcls = "warn";
     }
   }
-  return `<div class="kacheln">
+  // Transmitter (G6)
+  const tx = d.transmitter;
+  let txk = "";
+  if (tx && tx.relevant) {
+    const ta = tx.aktuell;
+    const tb = tx.bestand;
+    const vor = Number((d.einstellungen || {}).transmitter_vorlauf_tage ?? 7);
+    const tw = tb ? `<b>${tb.anzahl}</b><span>im Vorrat</span>` : "<b>?</b><span>Vorrat zählen</span>";
+    let tu;
+    let tcls = "";
+    const bisW = ta && ta.status === "laeuft" && tx.wechsel_am ? (new Date(tx.wechsel_am).getTime() - m.jetzt) / 86400000 : null;
+    if (ta && ta.status === "laeuft") {
+      tu = (ta.sn ? ta.sn + " · " : "") + (tx.wechsel_am ? `Wechsel ${tagZeit(tx.wechsel_am, m.tz, m.heute, false)}` : `bis ${datumText(ta.ende, m.tz, false)}`);
+      if (bisW !== null && bisW <= vor) tcls = "warn";
+    } else if (ta) {
+      tu = `abgelaufen ${datumText(ta.ende, m.tz, false)} – neuen eintragen`;
+      tcls = "warn";
+    } else {
+      tu = "aktueller noch nicht eingetragen";
+    }
+    if (tb && (tb.anzahl < 0 || (tb.anzahl === 0 && (tcls === "warn" || (bisW !== null && bisW <= 30))))) tcls = tcls === "warn" || tb.anzahl < 0 ? "rot" : "warn";
+    txk = kachel("transmitter", "mdi:access-point", "Transmitter", tw, tu, (tcls ? tcls + " " : "") + "tx");
+  }
+  return `<div class="kacheln${txk ? " mit-tx" : ""}">
 ${kachel("tab-sensoren", "mdi:package-variant", "Bestand", bw, bu, bcls)}
 ${kachel("naechste", "mdi:truck-delivery-outline", "Lieferung", lw, lu, lcls)}
 ${kachel("tab-reklamationen", "mdi:message-alert-outline", "Reklamationen", rw, ru, rcls)}
 ${kachel("rezept", "mdi:file-document-outline", "Folgerezept", zw, zu, zcls)}
+${txk}
 </div>`;
 }
 
 function hinweiseHtml(m) {
   const w = (m.daten.warnungen || []).filter((x) => x.art !== "foto");
   if (!w.length) return "";
-  const ic = { lieferung: "mdi:truck-alert-outline", knapp: "mdi:package-variant-remove", ersatz: "mdi:message-alert-outline", rezept: "mdi:file-document-alert-outline", bestand: "mdi:alert-outline", inventur: "mdi:clipboard-list-outline", sendung: "mdi:package-variant-closed-check" };
+  const ic = { lieferung: "mdi:truck-alert-outline", knapp: "mdi:package-variant-remove", ersatz: "mdi:message-alert-outline", rezept: "mdi:file-document-alert-outline", bestand: "mdi:alert-outline", inventur: "mdi:clipboard-list-outline", sendung: "mdi:package-variant-closed-check", transmitter: "mdi:access-point" };
   return w.map((x) => `<div class="hinweis warn">${icon(ic[x.art] || "mdi:alert-outline")}<span>${esc(x.text)}</span></div>`).join("");
 }
 
@@ -526,7 +579,8 @@ function lieferungZeile(L, m) {
   const p = teile(lieferungDatum(L), m.tz);
   const st = LIEF_STATUS[L.status] || L.status;
   let z2 = [];
-  if (L.anzahl || L.art !== "unbekannt") z2.push(L.modell ? `${L.anzahl}×${NB}${L.modell}` : `${L.anzahl}${NB}${L.anzahl === 1 ? "Sensor" : "Sensoren"}`);
+  if (L.anzahl || (L.art !== "unbekannt" && !L.transmitter)) z2.push(L.modell ? `${L.anzahl}×${NB}${L.modell}` : `${L.anzahl}${NB}${L.anzahl === 1 ? "Sensor" : "Sensoren"}`);
+  if (L.transmitter) z2.push(`${L.transmitter}${NB}Transmitter`);
   if (L.status === "zugestellt") z2.push(`zugestellt ${datumText(L.zugestellt_am, m.tz, false)}${L.zugestellt_angenommen ? " (angenommen)" : ""}`);
   else z2.push(st + (L.erwartet ? ` · erwartet ${datumText(L.erwartet, m.tz, false)}` : ""));
   const cls = L.aus ? " aus" : "";
@@ -565,6 +619,8 @@ function fallZeile(f, m) {
   const z2 = [fallText(f, m.tz)];
   if (f.antwort === "kulanz") z2.push("Kulanz");
   if (s) z2.push(`Sensor vom ${datumText(s.gesetzt, m.tz, false)}`);
+  const tr = f.sensor && !s ? transmitterById(m.daten, f.sensor) : null;
+  if (tr) z2.push(txName(tr));
   if (f.historisch) z2.push("vor der Bestandsführung");
   const icn = f.status === "erhalten" ? "mdi:check-circle-outline" : f.status === "erledigt" ? "mdi:check" : f.status === "abgelehnt" ? "mdi:close-circle-outline" : "mdi:clock-outline";
   return `<div class="z" data-a="fall" data-id="${esc(f.id)}" role="button" tabindex="0">
@@ -703,7 +759,8 @@ ${wert("Verwendbar bis", s.verwendbar_bis ? esc(datumText(s.verwendbar_bis, tz))
 ${wert("Hergestellt", s.hergestellt ? esc(datumText(s.hergestellt, tz)) : "")}
 ${wert("GTIN", esc(s.gtin || ""))}
 ${wert("Sensor-Code", esc(s.code || ""))}
-${wert(s.modell === "G6" ? "Transmitter-SN" : "Seriennummer", esc(s.sn || ""), s.sn_uebernommen ? "vom vorigen G6-Sensor übernommen" : "")}
+${s.modell === "G6" && s.transmitter_info ? wert("Transmitter", `<button class="link" data-a="tx-oeffnen" data-v="${esc(s.transmitter_info.id)}">${esc(s.transmitter_info.sn || "ohne Nummer")}</button>`, s.sn && s.sn !== s.transmitter_info.sn && !s.sn_uebernommen ? `am Sensor eingetragen: ${esc(s.sn)}` : "")
+    : wert(s.modell === "G6" ? "Transmitter-SN" : "Seriennummer", esc(s.sn || ""), s.sn_uebernommen ? "übernommen" : "")}
 ${wert("Quelle", esc(quelle))}
 ${wert("Notiz", s.notiz ? esc(s.notiz) : "")}
 ${fotoBereich(s, d, m)}
@@ -762,12 +819,14 @@ ${dFuss(knopf("zurueck-ansicht", neu ? "Abbrechen" : "Zurück", "", d), knopf("s
 
 function reklamationForm(d, m) {
   const f = d.f;
-  return `${dKopf("Reklamation", d)}
+  const tx = d.art === "transmitter";
+  const gruende = tx ? GRUENDE_TX : GRUENDE;
+  return `${dKopf(tx ? "Transmitter reklamieren" : "Reklamation", d)}
 <div class="inhalt">
 ${feld("Reklamiert am", eingabe("am", f.am, { type: "date", cls: "mittel2" }))}
-${feld("Ausgefallen am", eingabe("ausfall_am", f.ausfall_am, { type: "datetime-local", cls: "mittel2" }), "Wann der Sensor nicht mehr ging (setzt auch „entfernt“)")}
+${feld("Ausgefallen am", eingabe("ausfall_am", f.ausfall_am, { type: "datetime-local", cls: "mittel2" }), tx ? "Wann der Transmitter nicht mehr ging (beendet ihn)" : "Wann der Sensor nicht mehr ging (setzt auch „entfernt“)")}
 ${feld("Fallnummer", eingabe("fall", f.fall, { ph: "z. B. 260101-000123 (optional)" }), "Kommt per Mail und wird sonst automatisch zugeordnet")}
-${feld("Grund", `<div class="chips">${GRUENDE.map((g) => `<button class="${f.grund === g ? "an" : ""}" data-a="chip" data-f="grund" data-v="${esc(g)}">${esc(g)}</button>`).join("")}</div>`)}
+${feld("Grund", `<div class="chips">${gruende.map((g) => `<button class="${f.grund === g ? "an" : ""}" data-a="chip" data-f="grund" data-v="${esc(g)}">${esc(g)}</button>`).join("")}</div>`)}
 ${feld("", eingabe("grund", f.grund, { ph: "oder eigener Grund" }))}
 ${feld("Notiz", textfeld("notiz", f.notiz))}
 ${fehlerZeile(d)}
@@ -781,6 +840,108 @@ function loeschFrage(d, text, zurueck, ja) {
 ${dFuss(knopf(zurueck, "Abbrechen", "", d), knopf(ja, "Löschen", "rot-voll", d, "mdi:delete-outline"))}`;
 }
 
+function txZeile(x, m, an) {
+  const st = transmitterStatus(x);
+  const f = x.fall_info;
+  const chips = [`<span class="badge ${st.cls}">${esc(st.text)}</span>`];
+  if (x.reklamation && x.reklamation.am) chips.push(`<span class="badge ${fallCls(f)}">reklamiert${f ? " · " + esc(fallText(f, m.tz)) : ""}</span>`);
+  else if (x.status === "vorzeitig") chips.push(`<span class="badge warn">reklamieren?</span>`);
+  return `<div class="mz tx${an ? " an" : ""}" data-a="tx-zeigen" data-v="${esc(x.id)}" role="button" tabindex="0"><span class="mn">${esc(x.sn || "ohne Nummer")} · ab ${esc(datumText(x.start, m.tz))}</span><span class="chipzeile">${chips.join("")}</span></div>`;
+}
+
+function transmitterAnsicht(d, m) {
+  const daten = m.daten || {};
+  const tx = daten.transmitter || {};
+  const tz = m.tz;
+  const x = (d.id && transmitterById(daten, d.id)) || (d.id ? d.e : null);
+  const tb = tx.bestand;
+  const e = daten.einstellungen || {};
+  let oben;
+  if (x) {
+    const st = transmitterStatus(x);
+    const r = x.reklamation;
+    const f = x.fall_info;
+    const aktuell = tx.aktuell && x.id === tx.aktuell.id;
+    const quelle = { hand: "von Hand", automatisch: "automatisch erkannt (CGM-Integration)" }[x.quelle] || x.quelle;
+    let lauf = "";
+    if (x.status === "laeuft") lauf = `noch ${restText(new Date(x.ende).getTime() - m.jetzt)}`;
+    else if (x.gehalten_tage !== null && x.gehalten_tage !== undefined) lauf = `${ganz(x.gehalten_tage)} von ${ganz(x.soll_tage)} Tagen`;
+    let rek;
+    if (r && r.am) {
+      rek = `<div class="abschnitt">Reklamation</div>
+${wert("Reklamiert", esc(datumText(r.am, tz)))}
+${wert("Fall", r.fall ? esc(r.fall) : f && f.quelle === "mail" ? esc(f.id) + " <small>(automatisch zugeordnet)</small>" : "")}
+${wert("Ausgefallen", r.ausfall_am ? esc(tagZeit(r.ausfall_am, tz, m.heute)) : "")}
+${wert("Grund", r.grund ? esc(r.grund) : "")}
+${wert("Ersatz", f ? `<span class="badge ${fallCls(f)}">${esc(fallText(f, tz))}</span>` : "", f && f.antwort_datum ? `Dexcom-Antwort ${esc(datumText(f.antwort_datum, tz))}` : "")}
+${wert("Notiz", r.notiz ? esc(r.notiz) : "")}
+<div class="aktionen">
+${f && ["offen", "zugesagt", "unterwegs"].includes(f.status) ? knopf("rek-ersatz", "Ersatz erhalten", "haupt", d, "mdi:package-variant-closed-check") : ""}
+${f && f.status === "erhalten" && r.ersatz_erhalten_am ? knopf("rek-ersatz-offen", "Ersatz doch nicht da", "", d) : ""}
+${r.erledigt ? knopf("rek-offen", "Wieder öffnen", "", d) : knopf("rek-erledigt", "Abschließen", "", d, "mdi:check")}
+${knopf("rek-aendern", "Ändern", "", d, "mdi:pencil-outline")}
+${knopf("rek-entfernen", "Entfernen", "rot", d)}
+</div>`;
+    } else {
+      rek = `<div class="abschnitt">Reklamation</div>
+<div class="info klein">${icon("mdi:information-outline")}<span>${x.status === "vorzeitig" ? `Hat nur ${ganz(x.gehalten_tage)} Tage gehalten. ` : ""}Geht der Transmitter vorzeitig kaputt: bei Dexcom reklamieren (dexcom.com/DETechSupport oder ${TEL_TECHNIK.replace(/^0800(\d{3})(\d{4})$/, "0800 $1 $2")}), dann hier markieren. Die Fallnummer wird automatisch zugeordnet, das Ersatzpaket per DHL erkannt und als Transmitter gezählt.</span></div>
+<div class="aktionen">${knopf("reklamieren", "Reklamiert …", "", d, "mdi:message-alert-outline")}</div>`;
+    }
+    const verlauf = (x.verlauf || []).slice().reverse().map((v) => `<div class="mz"><span class="mn">${esc(v.was)}</span><span>${esc(tagZeit(v.z, tz, m.heute))}</span></div>`).join("");
+    oben = `${wert("Status", `<span class="badge ${st.cls}">${esc(st.text)}</span>`, lauf)}
+${wert("Seriennummer", x.sn ? `<b>${esc(x.sn)}</b>` : `<span class="klein">nicht eingetragen</span>`)}
+${wert("In Betrieb seit", esc(tagZeit(x.start, tz, m.heute)), x.quelle === "automatisch" ? "Ende laut CGM-Integration minus Laufzeit" : "")}
+${wert(x.status === "laeuft" ? "Läuft bis" : "Ende (Soll)", esc(tagZeit(x.ende, tz, m.heute)))}
+${x.status === "laeuft" ? wert("Neuer Sensor bis", esc(tagZeit(x.start_bis, tz, m.heute)), "danach startet mit ihm keine Sensorsitzung mehr (weniger als eine Sensorlaufzeit übrig)") : ""}
+${aktuell && tx.wechsel_am ? wert("Wechseln", `<b>${esc(tagZeit(tx.wechsel_am, tz, m.heute))}</b>`, "voraussichtlich beim Sensorwechsel") : ""}
+${wert("Nicht mehr benutzt", x.entfernt_eff && x.status !== "laeuft" ? esc(tagZeit(x.entfernt_eff, tz, m.heute)) + (x.entfernt_manuell ? "" : " <small>(nächster Transmitter)</small>") : "")}
+${wert("Sensoren", x.sensoren_n ? String(x.sensoren_n) : "")}
+${wert("LOT", esc(x.lot || ""))}
+${wert("Verwendbar bis", x.verwendbar_bis ? esc(datumText(x.verwendbar_bis, tz)) : "")}
+${wert("Quelle", esc(quelle))}
+${wert("Notiz", x.notiz ? esc(x.notiz) : "")}
+${rek}
+${verlauf ? `<details class="verlauf"><summary>Verlauf</summary>${verlauf}</details>` : ""}`;
+  } else {
+    oben = `<div class="info klein">${icon("mdi:information-outline")}<span>Noch kein Transmitter eingetragen. Der G6-Transmitter hält bis zu ${ganz(e.transmitter_tage || 90)} Tage ab der ersten Kopplung; mit weniger als einer Sensorlaufzeit Rest startet kein neuer Sensor mehr. Den laufenden unter „Neuer Transmitter“ eintragen${tx.relevant ? "" : " (nur bei Dexcom G6)"}.</span></div>`;
+  }
+  const vorrat = `<div class="abschnitt">Vorrat</div>
+${tb ? wert("Im Vorrat", `<b>${tb.anzahl}</b> unbenutzt`, `gezählt ${esc(tagZeit(tb.seit, tz, m.heute))}: ${tb.inventur} · seitdem +${tb.geliefert} geliefert, −${tb.verbraucht} in Betrieb genommen`)
+    : `<div class="info klein">${icon("mdi:counter")}<span>Vorrat noch nicht gezählt. Einmal zählen, danach rechnet die Karte selbst: jede G6-Quartalslieferung bringt ${ganz(e.transmitter_je_lieferung ?? 1)} mit, jeder neue Transmitter geht ab.</span></div>`}
+${tb && tb.aelteste ? wert("Ältester", `aus der Lieferung vom ${esc(datumText(tb.aelteste.versendet, tz))}`, `in Betrieb nehmen bis ${esc(datumText(tb.aelteste.aktivieren_bis, tz))} (Dexcom: innerhalb von 5 Monaten nach Versand)`) : ""}
+${d.zaehlen ? `${feld("Unbenutzt", eingabe("anzahl", d.f.anzahl, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 50 }), "Transmitter, die noch verpackt im Vorrat liegen")}<div class="aktionen">${knopf("tx-zaehlen-speichern", "Übernehmen", "haupt", d, "mdi:check")}${knopf("tx-zaehlen-ab", "Abbrechen", "", d)}</div>`
+    : `<div class="aktionen">${knopf("tx-zaehlen", tb ? "Neu zählen …" : "Vorrat zählen …", tb ? "" : "haupt", d, "mdi:counter")}</div>`}`;
+  const zeilen = (tx.liste || []).map((y) => txZeile(y, m, x && y.id === x.id)).join("");
+  return `${dKopf(x ? txName(x) : "Transmitter", d)}
+<div class="inhalt">
+${oben}
+${vorrat}
+<div class="abschnitt">Alle Transmitter</div>
+${zeilen || `<div class="klein">Noch keine eingetragen.</div>`}
+<div class="aktionen">${knopf("tx-neu", "Neuer Transmitter …", "", d, "mdi:plus")}</div>
+${fehlerZeile(d)}
+</div>
+${dFuss(x ? knopf("tx-loeschen", "Löschen", "rot", d) : "", (x ? knopf("tx-bearbeiten", "Bearbeiten", "", d, "mdi:pencil-outline") : "") + knopf("zu", "Schließen", "haupt", d))}`;
+}
+
+function transmitterForm(d, m) {
+  const f = d.f;
+  const neu = !!d.neu || !d.id;
+  return `${dKopf(neu ? "Neuer Transmitter" : "Transmitter bearbeiten", d)}
+<div class="inhalt">
+${neu ? `<div class="info klein">${icon("mdi:information-outline")}<span>Die Seriennummer steht auf dem Transmitter und seiner Verpackung. Liefert die CGM-Integration das Transmitter-Ende (z. B. YourLoops), wird ein neuer Transmitter auch von selbst eingetragen.</span></div>` : ""}
+${feld("Seriennummer", eingabe("sn", f.sn, { ph: "z. B. 8XXXXX" }))}
+${feld("In Betrieb seit", eingabe("gestartet", f.gestartet, { type: "datetime-local", cls: "mittel2" }), "erste Kopplung (mit dem ersten Sensor)")}
+${feld("LOT", eingabe("lot", f.lot))}
+${feld("Verwendbar bis", eingabe("verwendbar_bis", f.verwendbar_bis, { type: "date", cls: "mittel2" }))}
+${neu ? "" : feld("Nicht mehr benutzt seit", eingabe("entfernt", f.entfernt, { type: "datetime-local", cls: "mittel2" }), "nur bei Ausfall – sonst gilt der nächste Transmitter")}
+${feld("Notiz", textfeld("notiz", f.notiz))}
+${schalter("aus_bestand", f.aus_bestand, "Aus dem eigenen Vorrat genommen", "Aus: zählt nicht gegen den Vorrat (z. B. Leihgerät)")}
+${fehlerZeile(d)}
+</div>
+${dFuss(knopf("zurueck-ansicht", neu ? "Abbrechen" : "Zurück", "", d), knopf("tx-speichern", "Speichern", "haupt", d, "mdi:content-save-outline"))}`;
+}
+
 function lieferungAnsicht(d, m) {
   const L = ((m.daten && m.daten.lieferungen) || []).find((x) => x.id === d.id) || d.e;
   const tz = m.tz;
@@ -792,7 +953,7 @@ function lieferungAnsicht(d, m) {
 ${unklar ? `<div class="frage">${icon("mdi:help-circle-outline")}<span>DHL-Sendung von Dexcom ohne Versand- oder Reklamationsmail. Unter „Korrigieren“ Art und Anzahl eintragen, damit der Bestand stimmt.</span></div>` : ""}
 ${wert("Status", `<span class="badge ${L.status === "zugestellt" ? "ok" : "gut"}">${esc(LIEF_STATUS[L.status] || L.status)}</span>`, L.zugestellt_angenommen ? "angenommen („kommt heute“ ohne spätere Zustellmeldung)" : "")}
 ${wert("Art", esc(ART_NAME[L.art] || L.art), L.herkunft === "kundendienst" ? "Versand laut Antwort des Kundenservice (ohne Versandbestätigung)" : L.herkunft === "abgeleitet" ? "ohne Versandmail – als fällige Lieferung erkannt; sonst unter „Korrigieren“ ändern" : "")}
-${wert("Inhalt", L.modell ? `${L.anzahl}× ${esc(L.modell)}` : `${L.anzahl} ${L.anzahl === 1 ? "Sensor" : "Sensoren"} (Modell unbekannt)`, L.art === "quartal" && !(L.korrigiert || []).includes("anzahl") ? "Anzahl nach Einstellung – in der Mail steht keine" : "")}
+${wert("Inhalt", (L.modell ? `${L.anzahl}× ${esc(L.modell)}` : `${L.anzahl} ${L.anzahl === 1 ? "Sensor" : "Sensoren"} (Modell unbekannt)`) + (L.transmitter ? ` + ${L.transmitter} Transmitter` : ""), L.art === "quartal" && !(L.korrigiert || []).includes("anzahl") ? "Anzahl nach Einstellung – in der Mail steht keine" : "")}
 ${wert("Zeitraum", L.zeitraum_von ? `${esc(datumText(L.zeitraum_von, tz))} – ${esc(datumText(L.zeitraum_bis, tz))}` : "", L.teil ? (L.letzte ? "vorerst letzte Teillieferung" : "Teillieferung") : "")}
 ${wert("Bestellt", L.bestellt ? esc(tagZeit(L.bestellt, tz, m.heute)) : "")}
 ${wert("Versendet", L.versendet ? esc(tagZeit(L.versendet, tz, m.heute)) : "")}
@@ -822,6 +983,7 @@ function lieferungForm(d, m) {
 ${d.hinweis ? `<div class="frage">${icon("mdi:information-outline")}<span>${esc(d.hinweis)}</span></div>` : ""}
 ${feld("Art", chips("art", arten, f.art, { quartal: "Quartal", ersatz: "Ersatz", shop: "Webshop", sonstige: "Sonstige", unbekannt: "unklar" }))}
 ${feld("Anzahl", eingabe("anzahl", f.anzahl, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 60 }), "Sensoren in diesem Paket")}
+${f.modell === "G6" || f.art === "ersatz" || (f.transmitter && f.transmitter !== "0") ? feld("Transmitter", eingabe("transmitter", f.transmitter, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 10 }), "G6-Transmitter im Paket – leer = automatisch (1 je G6-Quartalslieferung, 1 als Ersatz für einen reklamierten)") : ""}
 ${feld("Modell", chips("modell", modelle, f.modell))}
 ${feld("Versendet am", eingabe("versendet", f.versendet, { type: "datetime-local", cls: "mittel2" }), neu ? "" : "leer = laut Mail")}
 ${feld("Zugestellt am", eingabe("zugestellt_am", f.zugestellt_am, { type: "datetime-local", cls: "mittel2" }), neu ? "" : "leer = laut DHL")}
@@ -840,7 +1002,11 @@ function fallAnsicht(d, m) {
   const s = f.sensor ? sensorById(m.daten, f.sensor) : null;
   const L = f.lieferung ? ((m.daten && m.daten.lieferungen) || []).find((x) => x.id === f.lieferung) : null;
   const sensoren = (m.daten.sensoren || []).slice(0, 25);
-  const auswahl = `<select data-f="sensor" class="voll"><option value="">– keinem Sensor –</option>${sensoren.map((x) => `<option value="${esc(x.id)}"${x.id === (d.f.sensor ?? f.sensor ?? "") ? " selected" : ""}>${esc(`${x.modell || "?"} vom ${datumText(x.gesetzt, tz)}${x.lot ? " · LOT " + x.lot : ""}`)}</option>`).join("")}</select>`;
+  const txListe = (m.daten.transmitter || {}).liste || [];
+  const tr = f.sensor ? transmitterById(m.daten, f.sensor) : null;
+  const gewaehlt = d.f.sensor ?? f.sensor ?? "";
+  const txOpt = txListe.length ? `<optgroup label="Transmitter">${txListe.map((x) => `<option value="${esc(x.id)}"${x.id === gewaehlt ? " selected" : ""}>${esc(`${txName(x)} vom ${datumText(x.start, tz)}`)}</option>`).join("")}</optgroup>` : "";
+  const auswahl = `<select data-f="sensor" class="voll"><option value="">– ${txListe.length ? "nichts zugeordnet" : "keinem Sensor"} –</option>${txListe.length ? `<optgroup label="Sensoren">` : ""}${sensoren.map((x) => `<option value="${esc(x.id)}"${x.id === (d.f.sensor ?? f.sensor ?? "") ? " selected" : ""}>${esc(`${x.modell || "?"} vom ${datumText(x.gesetzt, tz)}${x.lot ? " · LOT " + x.lot : ""}`)}</option>`).join("")}${txListe.length ? "</optgroup>" : ""}${txOpt}</select>`;
   const antwort = { ersatz: "Ersatz verschickt", kulanz: "Ersatz aus Kulanz", abgelehnt: "abgelehnt", info: "Antwort ohne Ersatz-Zusage" }[f.antwort] || "";
   return `${dKopf(karte ? "Reklamation" : `Fall ${f.id}`, d)}
 <div class="inhalt">
@@ -850,12 +1016,13 @@ ${karte ? wert("Dexcom-Antwort", antwort ? esc(antwort) : `<span class="klein">k
     : feld("Dexcom-Antwort", `<select data-f="antwort" class="voll">${[["mail", "wie aus den Mails"], ["keine", "keine Antwort"], ["ersatz", "Ersatz verschickt"], ["kulanz", "Ersatz aus Kulanz"], ["abgelehnt", "abgelehnt"], ["info", "Antwort ohne Ersatz-Zusage"]].map(([v, t]) => `<option value="${v}"${v === (d.f.antwort ?? (f.antwort_korrigiert ? f.antwort || "keine" : "mail")) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`,
       f.antwort_korrigiert ? "von Hand geändert" : antwort ? `laut Mail: ${esc(antwort)}${f.antwort_datum ? ` · ${esc(datumText(f.antwort_datum, tz))}` : ""}` : "keine Antwort-Mail erkannt")}
 ${wert("Ersatzpaket", L ? `${esc(LIEF_STATUS[L.status] || L.status)}${L.zugestellt_am ? " " + esc(datumText(L.zugestellt_am, tz)) : ""}` : f.ersatz_erhalten_am ? "erhalten " + esc(datumText(f.ersatz_erhalten_am, tz)) + " (von Hand)" : `<span class="klein">nicht erkannt</span>`)}
-${karte ? wert("Sensor", s ? esc(`${s.modell} vom ${datumText(s.gesetzt, tz)}`) : "") : feld("Sensor", auswahl)}
+${karte ? (tr ? wert("Transmitter", esc(`${tr.sn || "ohne Nummer"} vom ${datumText(tr.start, tz)}`)) : wert("Sensor", s ? esc(`${s.modell} vom ${datumText(s.gesetzt, tz)}`) : "")) : feld(txListe.length ? "Gehört zu" : "Sensor", auswahl)}
 ${karte ? "" : feld("Notiz", textfeld("notiz", d.f.notiz ?? f.notiz ?? ""))}
 <div class="aktionen">
 ${["offen", "zugesagt", "unterwegs"].includes(f.status) ? knopf("fall-ersatz", "Ersatz erhalten", "haupt", d, "mdi:package-variant-closed-check") : ""}
 ${f.status === "erledigt" ? knopf("fall-offen", "Wieder öffnen", "", d) : knopf("fall-erledigt", "Abschließen", "", d, "mdi:check")}
 ${karte && s ? knopf("fall-sensor", "Zum Sensor", "", d, "mdi:needle") : ""}
+${tr ? knopf("fall-tx", "Zum Transmitter", "", d, "mdi:access-point") : ""}
 </div>
 ${fehlerZeile(d)}
 </div>
@@ -918,17 +1085,22 @@ function einstellungenHtml(d, m) {
   const b = daten.bestand;
   const inv = daten.inventur;
   const meld = (daten.meldungen || []).slice(0, 6).map((x) => `<div class="mz"><span class="mn">${esc(x.titel)}</span><span>${esc(x.text)}</span><span>${esc(tagZeit(x.z, tz, m.heute))}</span></div>`).join("");
-  const pk = (daten.papierkorb || []).map((x) => `<div class="mz"><span class="mn">${esc(`${x.modell || "?"} vom ${datumText(x.gesetzt, tz)}${x.lot ? " · LOT " + x.lot : ""}`)}</span><span><button class="link" data-a="wiederherstellen" data-v="${esc(x.id)}">wiederherstellen</button></span></div>`).join("");
+  const tx = daten.transmitter || {};
+  const pk = (daten.papierkorb || []).map((x) => `<div class="mz"><span class="mn">${esc(x.art === "transmitter" ? `${txName(x)} vom ${datumText(x.gesetzt, tz)}` : `${x.modell || "?"} vom ${datumText(x.gesetzt, tz)}${x.lot ? " · LOT " + x.lot : ""}`)}</span><span><button class="link" data-a="wiederherstellen" data-v="${esc(x.id)}">wiederherstellen</button></span></div>`).join("");
   const g = daten.gmail || {};
   return `${dKopf("Einstellungen", d)}
 <div class="inhalt">
 <div class="abschnitt">Bestand</div>
-<div class="info klein">${icon("mdi:clipboard-list-outline")}<span>${b ? `Jetzt ${b.gesamt} ${b.gesamt === 1 ? "Sensor" : "Sensoren"} (${Object.entries(b.je_modell || {}).map(([k, v]) => `${v}× ${k}`).join(", ")}).` : "Noch keine Inventur."} ${inv ? `Zählung: ${esc(tagZeit(inv.zeit, tz, m.heute))} – seitdem zählen Lieferungen (+) und gesetzte Sensoren (−).` : ""}</span></div>
-${d.inventur ? `<div class="inv">${modelle.map((mo) => `<label>${esc(mo)}${eingabe("inv_" + mo, f["inv_" + mo], { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 100 })}</label>`).join("")}</div>
+<div class="info klein">${icon("mdi:clipboard-list-outline")}<span>${b ? `Jetzt ${b.gesamt} ${b.gesamt === 1 ? "Sensor" : "Sensoren"} (${Object.entries(b.je_modell || {}).map(([k, v]) => `${v}× ${k}`).join(", ")}).` : "Noch keine Inventur."} ${inv ? `Zählung: ${esc(tagZeit(inv.zeit, tz, m.heute))} – seitdem zählen Lieferungen (+) und gesetzte Sensoren (−).` : ""}${tx.relevant ? ` Transmitter im Vorrat: ${tx.bestand ? tx.bestand.anzahl : "noch nicht gezählt"}.` : ""}</span></div>
+${d.inventur ? `<div class="inv">${modelle.map((mo) => `<label>${esc(mo)}${eingabe("inv_" + mo, f["inv_" + mo], { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 100 })}</label>`).join("")}${tx.relevant ? `<label>Transmitter${eingabe("inv_tx", f.inv_tx, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 50, ph: "–" })}</label>` : ""}</div>
 <div class="aktionen">${knopf("inventur-speichern", "Bestand übernehmen", "haupt", d, "mdi:check")}${knopf("inventur-ab", "Abbrechen", "", d)}</div>` : `<div class="aktionen">${knopf("inventur", "Bestand jetzt zählen …", "", d, "mdi:counter")}</div>`}
 <div class="abschnitt">Lieferungen</div>
 ${feld("Modell neuer Lieferungen", chips("modell_lieferung", modelle, f.modell_lieferung), "Die Dexcom-Mails nennen kein Modell")}
 ${feld("Sensoren je Quartal", eingabe("quartal_anzahl", f.quartal_anzahl, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 60 }))}
+${feld("Transmitter je Quartal", eingabe("transmitter_je_lieferung", f.transmitter_je_lieferung, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 5 }), "nur bei G6-Lieferungen (G7 hat ihn im Sensor)")}
+<div class="abschnitt">Transmitter (G6)</div>
+${feld("Laufzeit", eingabe("transmitter_tage", f.transmitter_tage, { type: "number", mode: "numeric", cls: "schmal", min: 30, max: 200 }), "Tage ab der ersten Kopplung (Dexcom: bis zu 90)")}
+${feld("Erinnerung", eingabe("transmitter_vorlauf_tage", f.transmitter_vorlauf_tage, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 60 }), "Tage vor dem Sensorwechsel, an dem ein neuer Transmitter fällig ist")}
 <div class="abschnitt">Laufzeit je Modell</div>
 <table class="lz"><tr><th></th><th>Tage</th><th>Nachlauf (h)</th></tr>${modelle.map((mo) => `<tr><td>${esc(mo)}</td><td>${eingabe("lz_" + mo + "_tage", f["lz_" + mo + "_tage"], { type: "number", mode: "decimal", cls: "schmal", min: 1, max: 30, step: "0.5" })}</td><td>${eingabe("lz_" + mo + "_nach", f["lz_" + mo + "_nach"], { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 48 })}</td></tr>`).join("")}</table>
 <div class="abschnitt">Benachrichtigungen</div>
@@ -939,7 +1111,7 @@ ${feld("Rezept-Erinnerung", eingabe("rezept_vorlauf_tage", f.rezept_vorlauf_tage
 ${feld("Bestand knapp ab", eingabe("knapp_tage", f.knapp_tage, { type: "number", mode: "numeric", cls: "schmal", min: 0, max: 60 }), "Tagen Restreichweite ohne Lieferung unterwegs")}
 ${feld("Fotos behalten", eingabe("foto_tage", f.foto_tage, { type: "number", mode: "numeric", cls: "schmal", min: 1, max: 60 }), "Tage, dann wird das Etikett-Foto gelöscht")}
 ${feld("Handy", eingabe("notify", f.notify, { ph: "mobile_app_…" }), `notify-Dienst · <button class="link" data-a="test-push">Test senden</button>`)}
-${schalter("erkennung", f.erkennung, "Sensorwechsel automatisch erkennen", "über das Sensorende der CGM-Integration (Auswahl unter Integration → Konfigurieren)")}
+${schalter("erkennung", f.erkennung, "Sensor- und Transmitterwechsel automatisch erkennen", "über die CGM-Entitäten (Auswahl unter Integration → Konfigurieren)")}
 <div class="abschnitt">Mails</div>
 <div class="info klein">${icon("mdi:email-outline")}<span>${g.fehler ? esc(g.fehler) + " · " : ""}${g.mails || 0} Mails von Dexcom, Support und DHL seit ${esc(datumText(f.gmail_ab, tz))}${g.stand ? `, zuletzt ${esc(tagZeit(g.stand, tz, m.heute))}` : ""}. Nur lesen – nichts wird markiert oder verschoben.</span></div>
 <div class="aktionen">${knopf("gmail-dlg", "Jetzt prüfen", "", d, "mdi:email-search-outline")}${knopf("gmail-neu", "Alle neu einlesen", "", d)}</div>
@@ -959,6 +1131,12 @@ export function dialogHtml(d, m) {
     return sensorAnsicht(d, m);
   }
   if (d.art === "sensor-neu") return sensorForm(d, m);
+  if (d.art === "transmitter") {
+    if (d.schritt === "form") return transmitterForm(d, m);
+    if (d.schritt === "reklamation") return reklamationForm(d, m);
+    if (d.schritt === "loeschen") return loeschFrage(d, "Diesen Transmitter-Eintrag in den Papierkorb legen? Er zählt dann nicht mehr gegen den Vorrat.", "zurueck-ansicht", "tx-del");
+    return transmitterAnsicht(d, m);
+  }
   if (d.art === "lieferung") {
     if (d.schritt === "form") return lieferungForm(d, m);
     if (d.schritt === "loeschen") return loeschFrage(d, "Diese von Hand eingetragene Lieferung löschen?", "zurueck-ansicht", "lief-del");
@@ -1015,6 +1193,8 @@ ha-card { padding: 10px 12px 10px; }
 .kachel.warn { border-left-color: #f0a020; }
 .kachel.rot { border-left-color: var(--error-color, #db4437); }
 .kachel.gut { border-left-color: var(--success-color, #43a047); }
+.kacheln > .kachel.tx { grid-column: 1 / -1; }
+@media (min-width: 900px) { :host(.breit) .kacheln.mit-tx { grid-template-columns: repeat(5, 1fr); } :host(.breit) .kacheln > .kachel.tx { grid-column: auto; } }
 .kl { display: flex; align-items: center; gap: 6px; font-size: .84em; color: var(--secondary-text-color); margin-bottom: 2px; }
 .kl ha-icon { --mdc-icon-size: 17px; }
 .kw { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
@@ -1111,6 +1291,10 @@ input::placeholder, textarea::placeholder { color: var(--secondary-text-color); 
 .aktionen { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
 .mz { display: flex; flex-direction: column; gap: 1px; padding: 6px 2px; border-top: 1px solid var(--divider-color); font-size: .86em; color: var(--secondary-text-color); }
 .mz .mn { color: var(--primary-text-color); font-weight: 500; }
+.mz.tx { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; cursor: pointer; border-radius: 6px; padding-left: 6px; padding-right: 6px; }
+.mz.tx.an { background: rgba(127,127,127,.12); }
+.mz.tx.an .mn { color: var(--primary-color); }
+.chipzeile { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .fotozeile { display: flex; gap: 12px; align-items: flex-start; margin: 10px 0 4px; }
 .vorschau { width: 112px; height: 112px; object-fit: cover; border-radius: 10px; flex: none; background: rgba(127,127,127,.15); }
 .fotoinfo { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; min-width: 0; }
@@ -1278,7 +1462,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       }
       this._laedt = false;
       this._render();
-      if (this._dlg && !this._dlg.busy && ["sensor", "lieferung", "fall", "naechste", "rezept"].includes(this._dlg.art) && this._dlg.schritt === "ansicht") this._dialogRender(false);
+      if (this._dlg && !this._dlg.busy && ["sensor", "lieferung", "fall", "naechste", "rezept", "transmitter"].includes(this._dlg.art) && this._dlg.schritt === "ansicht") this._dialogRender(false);
     }
 
     _tz() {
@@ -1344,6 +1528,51 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         if (f) this._dialogOeffnen({ art: "fall", id: f.id, e: f, schritt: "ansicht", f: {} });
       } else if (a === "naechste") this._dialogOeffnen({ art: "naechste", schritt: "ansicht", f: {} });
       else if (a === "rezept") this._dialogOeffnen({ art: "rezept", schritt: "ansicht", f: {} });
+      else if (a === "transmitter") this._dialogTransmitter("");
+    }
+
+    _txFelder(x) {
+      const tz = this._tz();
+      return {
+        sn: (x && x.sn) || "", gestartet: x ? alsEingabe(x.gestartet || x.start, tz) : jetztEingabe(tz), lot: (x && x.lot) || "",
+        verwendbar_bis: (x && x.verwendbar_bis) || "", entfernt: x && x.entfernt ? alsEingabe(x.entfernt, tz) : "", notiz: (x && x.notiz) || "",
+        aus_bestand: !x || x.aus_bestand !== false, anzahl: "",
+      };
+    }
+
+    _dialogTransmitter(id) {
+      const tx = (this._daten && this._daten.transmitter) || {};
+      const x = (id && transmitterById(this._daten, id)) || tx.aktuell || (tx.liste || [])[0] || null;
+      this._dialogOeffnen({ art: "transmitter", id: x ? x.id : "", e: x, schritt: "ansicht", f: this._txFelder(x), zaehlen: false, neu: false });
+    }
+
+    async _txSpeichern() {
+      const d = this._dlg;
+      const f = d.f;
+      if (!f.gestartet) return this._dlgFehler("Bitte angeben, seit wann der Transmitter in Betrieb ist.");
+      const neu = !!d.neu || !d.id;
+      const daten = { aktion: "speichern", sn: f.sn.trim(), gestartet: eingabeZuText(f.gestartet), lot: f.lot.trim(), verwendbar_bis: f.verwendbar_bis || "", notiz: f.notiz, aus_bestand: !!f.aus_bestand };
+      if (!neu) {
+        daten.id = d.id;
+        daten.entfernt = f.entfernt ? eingabeZuText(f.entfernt) : "";
+      } else {
+        for (const k of Object.keys(daten)) if (daten[k] === "") delete daten[k];
+      }
+      this._beschaeftigt(true);
+      try {
+        const r = await this._dienst("dexcom_transmitter", daten);
+        if (!r || r.ok === false) throw new Error((r && r.fehler) || "fehlgeschlagen");
+        await this._laden();
+        if (this._dlg) {
+          const x = transmitterById(this._daten, r.id);
+          Object.assign(this._dlg, { id: r.id, e: x || this._dlg.e, neu: false, schritt: "ansicht", busy: false, fehler: "", zaehlen: false });
+          this._dialogRender(true);
+        }
+        this._melden(r.aktion === "zusammengefuehrt" ? "Mit dem Transmitter gleicher Nummer zusammengeführt." : neu ? "Transmitter eingetragen." : "Gespeichert.");
+      } catch (err) {
+        this._dlgFehler(fehlerText(err));
+      }
+      return undefined;
     }
 
     _tabSetzen(v) {
@@ -1397,7 +1626,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         .sort((x, y) => String(y.versendet || "").localeCompare(String(x.versendet || "")))[0];
       if (unklar) {
         const f = this._liefFelder(unklar);
-        Object.assign(f, { art: "quartal", anzahl: String(e.quartal_anzahl ?? 9), modell: e.modell_lieferung || "G7" });
+        Object.assign(f, { art: "quartal", anzahl: String(e.quartal_anzahl ?? 9), modell: e.modell_lieferung || "G7", transmitter: "" });
         if (!f.zugestellt_am) f.zugestellt_am = jetztEingabe(tz);
         this._dlg = {
           art: "lieferung", id: unklar.id, e: unklar, schritt: "form", busy: false, fehler: "", f, orig: this._liefFelder(unklar),
@@ -1408,7 +1637,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       }
       this._dlg = {
         art: "lieferung-neu", id: "", schritt: "form", busy: false, fehler: "",
-        f: { art: "quartal", anzahl: String(e.quartal_anzahl ?? 9), modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(tz), versendet: "", zeitraum_von: "", zeitraum_bis: "", sendungsnr: "", notiz: "" },
+        f: { art: "quartal", anzahl: String(e.quartal_anzahl ?? 9), modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(tz), versendet: "", zeitraum_von: "", zeitraum_bis: "", sendungsnr: "", notiz: "", transmitter: "" },
         orig: {}, hinweis: "Die angekündigte Lieferung ist da, aber ohne Mail? Hier eintragen – dann zählt sie zum Bestand und die Ankündigung ist erledigt.",
         meldung: "Lieferung eingetragen – Ankündigung erledigt.",
       };
@@ -1419,7 +1648,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       const e = (this._daten && this._daten.einstellungen) || {};
       this._dialogOeffnen({
         art: "lieferung-neu", id: "", schritt: "form",
-        f: { art: "ersatz", anzahl: "1", modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(this._tz()), versendet: "", zeitraum_von: "", zeitraum_bis: "", sendungsnr: "", notiz: "" },
+        f: { art: "ersatz", anzahl: "1", modell: e.modell_lieferung || "G7", zugestellt_am: jetztEingabe(this._tz()), versendet: "", zeitraum_von: "", zeitraum_bis: "", sendungsnr: "", notiz: "", transmitter: "" },
         orig: {}, hinweis: "",
       });
     }
@@ -1430,6 +1659,9 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         modell_lieferung: e.modell_lieferung || "G7", quartal_anzahl: String(e.quartal_anzahl ?? 9), wechsel_vorlauf_h: String(e.wechsel_vorlauf_h ?? 2),
         ersatz_tage: String(e.ersatz_tage ?? 7), rezept_vorlauf_tage: String(e.rezept_vorlauf_tage ?? 28), knapp_tage: String(e.knapp_tage ?? 7),
         notify: e.notify || "", erkennung: e.erkennung !== false, gmail_ab: e.gmail_ab || "", foto_tage: String(e.foto_tage ?? 7),
+        transmitter_tage: String(e.transmitter_tage ?? 90), transmitter_je_lieferung: String(e.transmitter_je_lieferung ?? 1),
+        transmitter_vorlauf_tage: String(e.transmitter_vorlauf_tage ?? 7),
+        inv_tx: (this._daten.transmitter || {}).bestand ? String(this._daten.transmitter.bestand.anzahl) : "",
       };
       for (const [k] of MELDEN) f["m_" + k] = !!(e.melden || {})[k];
       for (const mo of this._daten.modelle || []) {
@@ -1526,12 +1758,12 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         case "sensor-speichern":
           return this._sensorSpeichern();
         case "reklamieren": {
-          const s = sensorById(this._daten, d.id) || d.e;
+          const s = objektById(this._daten, d.id) || d.e;
           const tz = this._tz();
           return neu("reklamation", { f: { am: heuteIn(tz), ausfall_am: s.entfernt_eff && s.status !== "laeuft" ? alsEingabe(s.entfernt_eff, tz) : jetztEingabe(tz), fall: "", grund: "", notiz: "" } });
         }
         case "rek-aendern": {
-          const s = sensorById(this._daten, d.id) || d.e;
+          const s = objektById(this._daten, d.id) || d.e;
           const r = s.reklamation || {};
           const tz = this._tz();
           return neu("reklamation", { f: { am: r.am ? alsEingabe(r.am, tz).slice(0, 10) : heuteIn(tz), ausfall_am: r.ausfall_am ? alsEingabe(r.ausfall_am, tz) : "", fall: r.fall || "", grund: r.grund || "", notiz: r.notiz || "" } });
@@ -1576,6 +1808,43 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
           return this._fallAktion("offen", "Wieder offen.");
         case "fall-speichern":
           return this._fallSpeichern();
+        case "tx-bearbeiten":
+          return neu("form", { neu: false, f: this._txFelder(transmitterById(this._daten, d.id) || d.e) });
+        case "tx-neu":
+          return neu("form", { neu: true, f: this._txFelder(null) });
+        case "tx-speichern":
+          return this._txSpeichern();
+        case "tx-loeschen":
+          return neu("loeschen");
+        case "tx-del":
+          return this._ausfuehren("dexcom_transmitter", { aktion: "loeschen", id: d.id }, "Transmitter in den Papierkorb gelegt.");
+        case "tx-zeigen": {
+          const x = transmitterById(this._daten, el.dataset.v);
+          if (!x) return undefined;
+          return neu("ansicht", { id: x.id, e: x, zaehlen: false, neu: false, f: this._txFelder(x) });
+        }
+        case "tx-oeffnen":
+        case "fall-tx": {
+          const fx = a === "fall-tx" ? ((this._daten && this._daten.faelle) || []).find((y) => y.id === d.id) || d.e : null;
+          const x = transmitterById(this._daten, a === "fall-tx" ? fx && fx.sensor : el.dataset.v);
+          if (x) this._dialogOeffnen({ art: "transmitter", id: x.id, e: x, schritt: "ansicht", f: this._txFelder(x), zaehlen: false, neu: false });
+          return undefined;
+        }
+        case "tx-zaehlen": {
+          const tb = ((this._daten && this._daten.transmitter) || {}).bestand;
+          d.zaehlen = true;
+          d.f.anzahl = tb ? String(tb.anzahl) : "";
+          return this._dialogRender(false);
+        }
+        case "tx-zaehlen-ab":
+          d.zaehlen = false;
+          return this._dialogRender(false);
+        case "tx-zaehlen-speichern": {
+          const v = String(d.f.anzahl ?? "").trim();
+          if (!/^\d+$/.test(v)) return this._dlgFehler("Bitte die Anzahl als ganze Zahl angeben.");
+          d.zaehlen = false;
+          return this._ausfuehren("dexcom_transmitter", { aktion: "zaehlen", anzahl: Number(v) }, "Transmitter-Vorrat übernommen.", true);
+        }
         case "fall-sensor": {
           const f = ((this._daten && this._daten.faelle) || []).find((x) => x.id === d.id) || d.e;
           const s = sensorById(this._daten, f.sensor);
@@ -1648,7 +1917,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         case "test-push":
           return this._testPush();
         case "wiederherstellen":
-          return this._ausfuehren("dexcom_loeschen", { sensor_id: el.dataset.v, wiederherstellen: true }, "Sensor wiederhergestellt.", true);
+          return this._ausfuehren("dexcom_loeschen", { sensor_id: el.dataset.v, wiederherstellen: true }, "Wiederhergestellt.", true);
         default:
           return undefined;
       }
@@ -1864,17 +2133,21 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         art: L.art, anzahl: String(L.anzahl ?? ""), modell: L.modell || ((this._daten.einstellungen || {}).modell_lieferung || "G7"),
         zugestellt_am: L.zugestellt_am && !L.zugestellt_angenommen ? alsEingabe(L.zugestellt_am, tz) : "",
         versendet: L.versendet ? alsEingabe(L.versendet, tz) : "", zeitraum_von: L.zeitraum_von || "", zeitraum_bis: L.zeitraum_bis || "",
-        sendungsnr: L.sendungsnr || "", notiz: L.notiz || "",
+        sendungsnr: L.sendungsnr || "", notiz: L.notiz || "", transmitter: String(L.transmitter ?? ""),
       };
     }
 
     async _liefSpeichern() {
       const d = this._dlg;
       const f = d.f;
+      const zusatzTx = {};
       const anz = String(f.anzahl ?? "").trim();
       if (anz !== "" && !/^\d+$/.test(anz)) return this._dlgFehler("Anzahl bitte als ganze Zahl.");
+      const txAnz = String(f.transmitter ?? "").trim();
+      if (txAnz !== "" && !/^\d+$/.test(txAnz)) return this._dlgFehler("Transmitter bitte als ganze Zahl.");
+      if (!d.id ? txAnz !== "" : txAnz !== String((d.orig || {}).transmitter ?? "").trim()) zusatzTx.transmitter = txAnz === "" ? "" : Number(txAnz);
       if ((f.zeitraum_von || "") && (f.zeitraum_bis || "") && f.zeitraum_bis < f.zeitraum_von) return this._dlgFehler("Der Versorgungszeitraum endet vor seinem Beginn.");
-      const zusatz = {};
+      const zusatz = { ...zusatzTx };
       for (const k of ["versendet", "zeitraum_von", "zeitraum_bis", "sendungsnr"]) {
         if (k.startsWith("zeitraum") && f.art !== "quartal" && !(d.orig || {})[k]) continue;
         const wert = k === "versendet" ? eingabeZuText(f[k]) : String(f[k] || "").trim();
@@ -1936,9 +2209,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         if (!/^\d+$/.test(v)) return this._dlgFehler(`Bestand ${mo}: bitte eine ganze Zahl.`);
         bestand[mo] = Number(v);
       }
+      const txv = String(f.inv_tx ?? "").trim();
+      if (txv !== "" && !/^\d+$/.test(txv)) return this._dlgFehler("Transmitter: bitte eine ganze Zahl.");
       this._beschaeftigt(true);
       try {
-        const r = await this._dienst("dexcom_inventur", { bestand });
+        const r = await this._dienst("dexcom_inventur", txv !== "" ? { bestand, transmitter: Number(txv) } : { bestand });
         if (!r || r.ok === false) throw new Error((r && r.fehler) || "fehlgeschlagen");
         await this._laden();
         if (this._dlg) {
@@ -1962,7 +2237,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       const e = {
         laufzeit, melden, modell_lieferung: f.modell_lieferung, quartal_anzahl: f.quartal_anzahl, wechsel_vorlauf_h: f.wechsel_vorlauf_h,
         ersatz_tage: f.ersatz_tage, rezept_vorlauf_tage: f.rezept_vorlauf_tage, knapp_tage: f.knapp_tage, notify: f.notify, erkennung: !!f.erkennung,
-        foto_tage: f.foto_tage,
+        foto_tage: f.foto_tage, transmitter_tage: f.transmitter_tage, transmitter_je_lieferung: f.transmitter_je_lieferung,
+        transmitter_vorlauf_tage: f.transmitter_vorlauf_tage,
       };
       return this._ausfuehren("dexcom_einstellungen", { einstellungen: e }, "Einstellungen gespeichert.");
     }

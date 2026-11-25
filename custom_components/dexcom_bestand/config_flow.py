@@ -50,6 +50,8 @@ from .const import (
     CONF_PORT,
     CONF_QUARTAL_ANZAHL,
     CONF_SENSORENDE,
+    CONF_TRANSMITTER_ENDE,
+    CONF_TRANSMITTER_ID,
     CONF_SERVER,
     DATEINAME,
     DOMAIN,
@@ -133,6 +135,14 @@ def _sensorende_vorschlag(hass: HomeAssistant) -> str | None:
     return None
 
 
+def _transmitter_vorschlag(hass: HomeAssistant) -> tuple[str | None, str | None]:
+    """Zeitstempel-Sensor mit „transmitter“ im Namen (Ende des G6-Transmitters) und eine Entität mit Attribut transmitter_id."""
+    ende = next((s.entity_id for s in hass.states.async_all("sensor") if s.attributes.get("device_class") == "timestamp"
+                 and "transmitter" in s.entity_id and not s.entity_id.startswith("sensor.dexcom_")), None)
+    tid = next((s.entity_id for s in hass.states.async_all("sensor") if s.attributes.get("transmitter_id")), None)
+    return ende, tid
+
+
 def _zeitstempel_sensoren_da(hass: HomeAssistant) -> bool:
     return any(
         s.entity_id.startswith("sensor.") and s.attributes.get("device_class") == "timestamp"
@@ -176,6 +186,12 @@ def _sensoren_schema(hass: HomeAssistant, werte: dict) -> vol.Schema:
             vol.Optional(CONF_SENSORENDE, description={"suggested_value": werte.get(CONF_SENSORENDE)}): EntitySelector(
                 EntitySelectorConfig(domain="sensor", device_class="timestamp")
             ),
+            vol.Optional(CONF_TRANSMITTER_ENDE, description={"suggested_value": werte.get(CONF_TRANSMITTER_ENDE)}): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="timestamp")
+            ),
+            vol.Optional(CONF_TRANSMITTER_ID, description={"suggested_value": werte.get(CONF_TRANSMITTER_ID)}): EntitySelector(
+                EntitySelectorConfig(domain="sensor")
+            ),
             vol.Optional(CONF_NOTIFY, description={"suggested_value": werte.get(CONF_NOTIFY)}): SelectSelector(
                 SelectSelectorConfig(options=dienste, custom_value=True, mode=SelectSelectorMode.DROPDOWN)
             ),
@@ -216,6 +232,8 @@ def _optionen_sauber(werte: dict) -> dict:
     aus = {
         CONF_MAIL: werte.get(CONF_MAIL) or MAIL_KEINE,
         CONF_SENSORENDE: werte.get(CONF_SENSORENDE) or "",
+        CONF_TRANSMITTER_ENDE: werte.get(CONF_TRANSMITTER_ENDE) or "",
+        CONF_TRANSMITTER_ID: werte.get(CONF_TRANSMITTER_ID) or "",
         OPT_SEITENLEISTE: bool(werte.get(OPT_SEITENLEISTE, True)),
         OPT_TITEL: str(werte.get(OPT_TITEL) or "").strip() or STANDARD_TITEL,
         OPT_LINK: link,
@@ -302,12 +320,15 @@ class DexcomConfigFlow(ConfigFlow, domain=DOMAIN):
             if self._daten_da:
                 return self._anlegen()
             return await self.async_step_bestand()
-        werte = {CONF_SENSORENDE: _sensorende_vorschlag(self.hass), OPT_SEITENLEISTE: True, OPT_TITEL: STANDARD_TITEL}
+        tx_ende, tx_id = _transmitter_vorschlag(self.hass)
+        werte = {CONF_SENSORENDE: _sensorende_vorschlag(self.hass), CONF_TRANSMITTER_ENDE: tx_ende, CONF_TRANSMITTER_ID: tx_id,
+                 OPT_SEITENLEISTE: True, OPT_TITEL: STANDARD_TITEL}
         bisher = await _vorhandene_daten(self.hass)
         notify = ((bisher or {}).get("einstellungen") or {}).get("notify")
         dienste = _notify_dienste(self.hass)
         werte[CONF_NOTIFY] = notify or next((d for d in dienste if d.startswith("mobile_app_")), None)
-        werte.update({k: v for k, v in self._werte.items() if k in (CONF_SENSORENDE, CONF_NOTIFY, OPT_SEITENLEISTE, OPT_TITEL)})
+        werte.update({k: v for k, v in self._werte.items()
+                      if k in (CONF_SENSORENDE, CONF_TRANSMITTER_ENDE, CONF_TRANSMITTER_ID, CONF_NOTIFY, OPT_SEITENLEISTE, OPT_TITEL)})
         return self.async_show_form(
             step_id="sensoren",
             data_schema=_sensoren_schema(self.hass, werte),
@@ -378,7 +399,8 @@ class DexcomOptionsFlow(OptionsFlow):
         aktuell = self._aktuell()
         if user_input is not None:
             # Geleerte Felder (Sensorende, Handy) kommen nicht mit – dann bewusst leer statt alter Wert
-            self._werte = {**aktuell, CONF_SENSORENDE: "", CONF_NOTIFY: "", CONF_MAILS_AB: "", **user_input}
+            self._werte = {**aktuell, CONF_SENSORENDE: "", CONF_TRANSMITTER_ENDE: "", CONF_TRANSMITTER_ID: "", CONF_NOTIFY: "",
+                           CONF_MAILS_AB: "", **user_input}
             quelle = user_input[CONF_MAIL]
             if quelle == MAIL_EIGEN:
                 return await self.async_step_zugang()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dexcom_bestand"
 NAME = "Dexcom Sensorbestand"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 # Daten: <config>/dexcom/ (wie in der früheren Pyscript-Fassung)
 ORDNER = "dexcom"
@@ -38,6 +38,8 @@ CONF_PASSWORT = "passwort"
 CONF_ORDNER = "ordner"
 CONF_MAILS_AB = "mails_ab"
 CONF_SENSORENDE = "sensorende"
+CONF_TRANSMITTER_ENDE = "transmitter_ende"  # Zeitstempel: Ende des laufenden G6-Transmitters
+CONF_TRANSMITTER_ID = "transmitter_id"  # Entität mit der Transmitter-ID (Attribut transmitter_id oder Zustand)
 CONF_NOTIFY = "notify"
 OPT_SEITENLEISTE = "seitenleiste"
 OPT_TITEL = "titel"
@@ -68,6 +70,7 @@ DIENSTE = (
     "lieferung",
     "loeschen",
     "inventur",
+    "transmitter",
     "rezept",
     "einstellungen",
     "gmail",

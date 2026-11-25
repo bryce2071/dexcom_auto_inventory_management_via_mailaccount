@@ -21,14 +21,22 @@ mail recognition is tuned to German Dexcom, Dexcom webshop and DHL mails.*
 - **Lieferungen aus den Mails:** Ankündigungen (geplanter Versand, Folgerezept), Versand mit
   Versorgungszeitraum, Webshop-Bestellungen, DHL-Status (unterwegs, kommt heute mit Zeitfenster,
   verspätet, zugestellt) und Ersatzlieferungen. Alles lässt sich korrigieren oder von Hand ergänzen.
-- **Reklamationen:** Sensor als reklamiert markieren, Support-Fälle aus den Mails (Fallnummer, Antwort
-  „Ersatz verschickt“) zuordnen und überwachen, bis der Ersatz da ist.
-- **Benachrichtigungen** aufs Handy (Home-Assistant-App): Sensorwechsel fällig, neuer Sensor erkannt,
+- **Transmitter (G6):** Vorrat (jede G6-Quartalslieferung bringt einen mit, jeder neue geht ab), laufender
+  Transmitter mit Seriennummer, „neuer Sensor nur bis“ (mit weniger als einer Sensorlaufzeit Rest startet
+  keine Sitzung mehr) und dem Sensorwechsel, bei dem ein neuer fällig ist. Liefert eine CGM-Integration das
+  Transmitter-Ende (z. B. YourLoops/DBLG1), wird ein neuer Transmitter automatisch eingetragen. Hinweis, wenn
+  ein gelieferter Transmitter bald aktiviert werden muss (Dexcom: innerhalb von 5 Monaten nach Versand).
+  Beim G7 steckt der Transmitter im Sensor – dann bleibt dieser Teil ausgeblendet.
+- **Reklamationen:** Sensor oder Transmitter als reklamiert markieren, Support-Fälle aus den Mails
+  (Fallnummer, Antwort „Ersatz verschickt“) zuordnen und überwachen, bis der Ersatz da ist. Ein Ersatzpaket
+  für einen Transmitter zählt als Transmitter.
+- **Benachrichtigungen** aufs Handy (Home-Assistant-App): Sensorwechsel fällig (mit Hinweis, wenn auch der
+  Transmitter dran ist), neuer Sensor bzw. Transmitter erkannt, Transmitter wechseln bzw. keiner mehr im Vorrat,
   Lieferung überfällig bzw. Bestand knapp, Ersatz fehlt, Folgerezept fällig – mit Ruhezeit in der Nacht.
   Antippen öffnet die Übersicht.
 - **Alles korrigierbar:** Sensoren (alle Etikett-Daten, gesetzt, entfernt), Lieferungen (Art, Anzahl, Modell, Versand,
   Versorgungszeitraum, Sendungsnummer, Zustellung), die angekündigte Lieferung („ist angekommen“, eigene Frist,
-  ausblenden), die Antwort von Dexcom zu einem Fall, der Folgerezept-Termin und der Bestand (Inventur).
+  ausblenden), die Antwort von Dexcom zu einem Fall, der Folgerezept-Termin, Transmitter und der Bestand (Inventur).
 - **Eigene Seite in der Seitenleiste** („Dexcom“) und eine Karte für eigene Dashboards.
 
 ## Voraussetzungen
@@ -40,6 +48,8 @@ mail recognition is tuned to German Dexcom, Dexcom webshop and DHL mails.*
 - Optional für die automatische Erkennung des Sensorwechsels: eine CGM-Integration mit einem
   Zeitstempel-Sensor für das Ende der Sensorsitzung, z. B.
   [Sugar Sense](https://github.com/sugarsense/ha-sugarsense) (im Marketplace).
+- Optional für den G6-Transmitter: ein Zeitstempel-Sensor mit dem Transmitter-Ende und eine Entität mit der
+  Transmitter-ID (Attribut `transmitter_id` oder Zustand), z. B. aus einer YourLoops/DBLG1-Anbindung.
 - Optional für Benachrichtigungen: die Home-Assistant-App auf dem Handy.
 
 ## Installation
@@ -55,7 +65,8 @@ mail recognition is tuned to German Dexcom, Dexcom webshop and DHL mails.*
      Die Anmeldung wird sofort geprüft.
    - **Sensorwechsel und Benachrichtigungen:** den Sensorende-Sensor deiner CGM-Integration (Sugar Sense
      wird erkannt und vorausgewählt; fehlt eine passende Integration, zeigt der Dialog, wo es sie gibt),
-     das Handy für Push-Meldungen und ob die Seite in der Seitenleiste erscheinen soll.
+     optional Transmitter-Ende und Transmitter-ID (G6), das Handy für Push-Meldungen und ob die Seite in der
+     Seitenleiste erscheinen soll.
    - **Startbestand:** wie viele G6- und G7-Sensoren gerade im Haus sind, welches Modell neue
      Lieferungen haben und wie viele Sensoren eine Quartalslieferung enthält.
 4. Fertig: In der Seitenleiste erscheint **Dexcom**.
@@ -89,7 +100,7 @@ Benachrichtigungen eintragen (z. B. `/mein-dashboard/diabetes`).
 
 | Entität | Zustand | Attribute |
 |---|---|---|
-| `sensor.dexcom_bestand` | Sensoren im Haus | `je_modell`, `inventur_seit`, `reicht_bis`, `aktueller_sensor`, `lieferung`, `offene_reklamationen`, `folgerezept_bis`, `warnungen`, `version` |
+| `sensor.dexcom_bestand` | Sensoren im Haus | `je_modell`, `inventur_seit`, `reicht_bis`, `aktueller_sensor`, `lieferung`, `offene_reklamationen`, `folgerezept_bis`, `warnungen`, `transmitter_bestand`, `transmitter` (Seriennummer, gestartet, Ende, `neu_bis`, `wechsel_am`, Status, Tag), `version` |
 | `sensor.dexcom_sensor_ende` | Ende des aktuellen Sensors (Zeitstempel) | `modell`, `gesetzt`, `status`, `tag` |
 | `sensor.dexcom_lieferung` | –, angekündigt, überfällig, versendet, unterwegs, kommt heute, verzögert, abholbereit | `text`, `naechste`, `unterwegs` |
 
@@ -113,11 +124,12 @@ actions:
 | `dexcom_bestand.liste` | alle Daten für die Karte (Antwort) |
 | `dexcom_bestand.sensor` | Sensor eintragen (ohne `id`) oder ändern (mit `id`) |
 | `dexcom_bestand.foto` | Etikett-Foto hochladen, holen oder löschen |
-| `dexcom_bestand.reklamation` | Sensor reklamieren, Ersatz erhalten, abschließen, aufheben |
-| `dexcom_bestand.fall` | Support-Fall aus den Mails einem Sensor zuordnen, Antwort korrigieren, abschließen |
+| `dexcom_bestand.reklamation` | Sensor oder Transmitter reklamieren, Ersatz erhalten, abschließen, aufheben |
+| `dexcom_bestand.fall` | Support-Fall aus den Mails einem Sensor oder Transmitter zuordnen, Antwort korrigieren, abschließen |
 | `dexcom_bestand.lieferung` | Lieferung korrigieren oder von Hand eintragen; angekündigte Lieferung ausblenden oder Frist ändern |
 | `dexcom_bestand.loeschen` | Sensor in den Papierkorb (oder zurück) |
-| `dexcom_bestand.inventur` | Bestand zu einem Zeitpunkt setzen |
+| `dexcom_bestand.inventur` | Bestand zu einem Zeitpunkt setzen (optional auch die Transmitter) |
+| `dexcom_bestand.transmitter` | G6-Transmitter eintragen, ändern, löschen oder den Vorrat zählen |
 | `dexcom_bestand.rezept` | Folgerezept als verschickt markieren oder den Termin von Hand setzen |
 | `dexcom_bestand.einstellungen` | Einstellungen ändern |
 | `dexcom_bestand.gmail` | Postfach jetzt prüfen (sonst 07:35, 12:35 und 18:35 Uhr sowie bei neuen Mails laut IMAP-Integration) |

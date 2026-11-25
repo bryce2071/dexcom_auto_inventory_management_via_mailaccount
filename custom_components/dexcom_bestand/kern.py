@@ -35,6 +35,8 @@ from .const import (
     CONF_PORT,
     CONF_SENSORENDE,
     CONF_SERVER,
+    CONF_TRANSMITTER_ENDE,
+    CONF_TRANSMITTER_ID,
     DATEINAME,
     FOTO_MAX,
     FOTOORDNER,
@@ -71,6 +73,9 @@ class DexcomKern:
         opt = einstellungen_zusammen(entry)
         self.mail_quelle: str = str(opt.get(CONF_MAIL) or MAIL_KEINE)
         self.sensorende: str = str(opt.get(CONF_SENSORENDE) or "")
+        self.tx_ende: str = str(opt.get(CONF_TRANSMITTER_ENDE) or "")
+        self.tx_id: str = str(opt.get(CONF_TRANSMITTER_ID) or "")
+        self._tx_zuletzt: tuple | None = None
         self.link: str = str(opt.get(OPT_LINK) or STANDARD_LINK)
         self.ordner = hass.config.path(ORDNER)
         self.pfad = hass.config.path(ORDNER, DATEINAME)
@@ -119,6 +124,9 @@ class DexcomKern:
             self._abmelden.append(
                 async_track_state_change_event(self.hass, [self.sensorende], self._async_sensorende)
             )
+        tx_quellen = [e for e in (self.tx_ende, self.tx_id) if e]
+        if self.tx_ende:
+            self._abmelden.append(async_track_state_change_event(self.hass, tx_quellen, self._async_tx_ereignis))
         if self.mail_quelle.startswith("imap:"):
             self._abmelden.append(self.hass.bus.async_listen("imap_content", self._async_imap_ereignis))
         self._abmelden.append(async_at_started(self.hass, self._async_gestartet))
@@ -152,6 +160,10 @@ class DexcomKern:
                 await self._async_sitzung_pruefen(zustand.state if zustand else None)
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Dexcom: Sitzungsprüfung beim Start: %s", exc)
+        try:
+            await self._async_transmitter_pruefen()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Dexcom: Transmitter-Prüfung beim Start: %s", exc)
         await self.async_pruefen()
 
     # ------------------------------------------------------------------ Laden und Speichern
@@ -270,6 +282,8 @@ class DexcomKern:
                 "offene_reklamationen": offen,
                 "folgerezept_bis": a["folgerezept"]["bis"] if a["folgerezept"] else None,
                 "warnungen": [w["text"] for w in a["warnungen"]],
+                "transmitter_bestand": (a["transmitter"]["bestand"] or {}).get("anzahl"),
+                "transmitter": self._transmitter_attr(a),
             },
             "ende": akt["ende"] if (akt and akt.get("ende")) else None,
             "ende_attr": {
@@ -283,6 +297,16 @@ class DexcomKern:
         }
         async_dispatcher_send(self.hass, SIGNAL_AKTUALISIERT)
         return a
+
+    @staticmethod
+    def _transmitter_attr(a: dict) -> dict | None:
+        txl = a.get("transmitter") or {}
+        ta = txl.get("aktuell")
+        if not ta:
+            return None
+        return {"sn": ta.get("sn") or None, "gestartet": ta.get("start"), "ende": ta.get("ende"), "neu_bis": ta.get("start_bis"),
+                "wechsel_am": L._iso(txl.get("wechsel_am")), "status": ta.get("status"), "tag": ta.get("tag"),
+                "rest_tage": ta.get("rest_tage")}
 
     # ------------------------------------------------------------------ Benachrichtigungen
 
@@ -473,6 +497,59 @@ class DexcomKern:
                 await self.async_speichern()
         return erg
 
+    # ------------------------------------------------------------------ Transmitter (G6)
+
+    async def _async_tx_ereignis(self, _event: Event) -> None:
+        try:
+            await self._async_transmitter_pruefen()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Dexcom: Transmitter-Prüfung fehlgeschlagen: %s", exc)
+
+    def _tx_werte(self) -> tuple[str | None, str]:
+        """Ende und ID des laufenden Transmitters aus den gewählten Entitäten."""
+        z = self.hass.states.get(self.tx_ende) if self.tx_ende else None
+        ende = z.state if z is not None and z.state not in LEER else None
+        tid = ""
+        if self.tx_id:
+            q = self.hass.states.get(self.tx_id)
+            if q is not None:
+                tid = str(q.attributes.get("transmitter_id") or "")
+                if not tid and q.state not in LEER and " " not in str(q.state):
+                    tid = str(q.state)
+        elif z is not None:
+            tid = str(z.attributes.get("transmitter_id") or "")
+        return ende, tid
+
+    async def _async_transmitter_pruefen(self) -> dict | None:
+        """Laufenden Transmitter aus der CGM-Integration übernehmen (nur bei geändertem Ende bzw. geänderter ID)."""
+        d = self.daten
+        if not self.tx_ende or not d["einstellungen"].get("erkennung", True):
+            return None
+        ende, tid = self._tx_werte()
+        if ende is None or self._tx_zuletzt == (ende, tid):
+            return None
+        jetzt = dt_util.now()
+        tz = self._tz()
+        erg = L._transmitter_quelle(d, ende, tid, jetzt, tz)
+        self._tx_zuletzt = (ende, tid)
+        if not erg:
+            return None
+        await self.async_geaendert()
+        _LOGGER.info("Dexcom: Transmitter %s (%s)", erg["aktion"], erg["id"])
+        neu_gestartet = (jetzt - L._zeit(erg.get("start"), tz)).total_seconds() < 3 * 86400 if erg.get("start") else False
+        if erg["aktion"] == "neu" and neu_gestartet and d["einstellungen"]["melden"].get("neu_erkannt"):
+            # nur bei einem wirklich neuen Transmitter melden (nicht beim ersten Einlesen eines laufenden)
+            tb = self._auswerten(jetzt)["transmitter"]["bestand"]
+            text = ("Neuer G6-Transmitter" + ((" " + erg["sn"]) if erg.get("sn") else "") + " erkannt (seit "
+                    + L._zeit(erg["start"], tz).strftime("%d.%m. %H:%M") + ", läuft bis " + L._zeit(erg["ende"], tz).strftime("%d.%m.%Y") + ").")
+            if tb is not None:
+                text += " Im Bestand jetzt " + str(tb["anzahl"]) + "."
+            m = {"key": "neu:" + erg["id"], "art": "neu_erkannt", "titel": "Dexcom: neuer Transmitter", "text": text}
+            if await self._async_push(m["titel"], m["text"], "dexcom-transmitter"):
+                self._gemeldet(m, jetzt)
+                await self.async_speichern()
+        return erg
+
     # ------------------------------------------------------------------ Zeitplan
 
     async def _async_takt(self, _jetzt: datetime) -> None:
@@ -611,7 +688,8 @@ class DexcomKern:
 
     async def _dienst_lieferung(self, p: dict) -> dict:
         werte = {"id": p.get("id"), "aktion": p.get("aktion") or "speichern", "am": p.get("am")}
-        for k in ("art", "anzahl", "modell", "zugestellt_am", "versendet", "notiz", "zeitraum_von", "zeitraum_bis", "sendungsnr"):
+        for k in ("art", "anzahl", "modell", "zugestellt_am", "versendet", "notiz", "zeitraum_von", "zeitraum_bis", "sendungsnr",
+                  "transmitter"):
             if p.get(k) is not None:
                 werte[k] = p[k]
         erg = L._lieferung_aktion(self.daten, werte, dt_util.now(), self._tz())
@@ -628,7 +706,10 @@ class DexcomKern:
                 return {"ok": False, "fehler": "Nicht im Papierkorb."}
             d["papierkorb"] = [x for x in d["papierkorb"] if x["id"] != sid]
             s.pop("geloescht", None)
-            d["sensoren"].append(s)
+            if s.pop("art", None) == "transmitter":
+                d.setdefault("transmitter", []).append(s)
+            else:
+                d["sensoren"].append(s)
         else:
             s = next((x for x in d["sensoren"] if x["id"] == sid), None)
             if s is None:
@@ -657,9 +738,26 @@ class DexcomKern:
             b[L._modell_norm(p["modell"])] = int(p["anzahl"])
         if not b:
             b = {"G6": 0, "G7": 0}
+        if p.get("transmitter") not in (None, ""):
+            erg = L._transmitter_aktion(d, {"aktion": "zaehlen", "anzahl": p["transmitter"], "zeit": L._iso(t)}, jetzt, self._tz())
+            if not erg.get("ok"):
+                return erg
         d["inventur"] = {"zeit": L._iso(t), "bestand": b, "erstellt": L._iso(jetzt)}
         await self.async_geaendert()
-        return {"ok": True, "inventur": d["inventur"], "bestand": self._auswerten(jetzt)["bestand"]}
+        a = self._auswerten(jetzt)
+        return {"ok": True, "inventur": d["inventur"], "bestand": a["bestand"], "transmitter": a["transmitter"]["bestand"]}
+
+    async def _dienst_transmitter(self, p: dict) -> dict:
+        werte = {"aktion": p.get("aktion") or "speichern", "id": p.get("id")}
+        for k in ("sn", "lot", "verwendbar_bis", "gestartet", "entfernt", "notiz", "aus_bestand", "anzahl", "zeit"):
+            if p.get(k) is not None:
+                werte[k] = p[k]
+        jetzt = dt_util.now()
+        erg = L._transmitter_aktion(self.daten, werte, jetzt, self._tz())
+        if erg.get("ok"):
+            await self.async_geaendert()
+            erg["bestand"] = self._auswerten(jetzt)["transmitter"]["bestand"]
+        return erg
 
     async def _dienst_rezept(self, p: dict) -> dict:
         d = self.daten

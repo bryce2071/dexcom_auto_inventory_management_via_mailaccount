@@ -32,12 +32,16 @@
         "description": "{cgm_hinweis}{notify_hinweis}",
         "data": {
           "sensorende": "Sensorende (CGM-Integration)",
+          "transmitter_ende": "Transmitter-Ende (G6, optional)",
+          "transmitter_id": "Transmitter-ID (optional)",
           "notify": "Handy für Benachrichtigungen",
           "seitenleiste": "Eintrag in der Seitenleiste",
           "titel": "Name in der Seitenleiste"
         },
         "data_description": {
           "sensorende": "Zeitstempel-Sensor, der das Ende der laufenden Sensorsitzung liefert – springt er, wird ein neuer Sensor automatisch erkannt.",
+          "transmitter_ende": "Zeitstempel-Sensor mit dem Ende des laufenden G6-Transmitters (z. B. aus YourLoops/DBLG1). Springt er, wird ein neuer Transmitter automatisch eingetragen. Leer = von Hand in der Karte.",
+          "transmitter_id": "Entität mit der Seriennummer des Transmitters (Attribut transmitter_id oder Zustand).",
           "notify": "notify-Dienst des Handys (mobile_app_…). Leer = keine Push-Meldungen.",
           "seitenleiste": "Zeigt die Dexcom-Übersicht als eigene Seite in der Seitenleiste."
         }
@@ -75,6 +79,8 @@
           "mail": "Postfach",
           "mails_ab": "Mails berücksichtigen ab",
           "sensorende": "Sensorende (CGM-Integration)",
+          "transmitter_ende": "Transmitter-Ende (G6, optional)",
+          "transmitter_id": "Transmitter-ID (optional)",
           "notify": "Handy für Benachrichtigungen",
           "seitenleiste": "Eintrag in der Seitenleiste",
           "titel": "Name in der Seitenleiste",
@@ -83,6 +89,8 @@
         "data_description": {
           "mail": "Eine vorhandene IMAP-Integration, eigene Zugangsdaten oder ohne Postfach.",
           "sensorende": "Zeitstempel-Sensor mit dem Ende der laufenden Sensorsitzung (z. B. von Sugar Sense). Leer = keine automatische Erkennung.",
+          "transmitter_ende": "Zeitstempel-Sensor mit dem Ende des laufenden G6-Transmitters (z. B. aus YourLoops/DBLG1). Springt er, wird ein neuer Transmitter automatisch eingetragen. Leer = von Hand in der Karte.",
+          "transmitter_id": "Entität mit der Seriennummer des Transmitters (Attribut transmitter_id oder Zustand).",
           "notify": "notify-Dienst des Handys (mobile_app_…). Leer = keine Push-Meldungen.",
           "link": "Pfad, den ein Antippen der Benachrichtigung öffnet, z. B. /dexcom-bestand (Seitenleiste) oder /mein-dashboard/diabetes, wenn die Karte auf einem eigenen Dashboard liegt."
         }
@@ -202,11 +210,11 @@
     },
     "reklamation": {
       "name": "Reklamation",
-      "description": "Sensor als reklamiert markieren, ändern, Ersatz erhalten, abschließen oder aufheben.",
+      "description": "Sensor oder Transmitter als reklamiert markieren, ändern, Ersatz erhalten, abschließen oder aufheben.",
       "fields": {
         "sensor_id": {
-          "name": "Sensor",
-          "description": "Sensor-ID."
+          "name": "Sensor oder Transmitter",
+          "description": "ID des Sensors (s…) oder Transmitters (t…)."
         },
         "aktion": {
           "name": "Aktion",
@@ -248,7 +256,7 @@
         },
         "sensor_id": {
           "name": "Sensor",
-          "description": "Bei zuordnen; leer = Zuordnung lösen."
+          "description": "Sensor oder Transmitter (bei zuordnen; leer = Zuordnung lösen)."
         },
         "am": {
           "name": "Am",
@@ -315,6 +323,10 @@
         "sendungsnr": {
           "name": "Sendungsnummer",
           "description": "DHL-Sendungsnummer; leer = wie aus der Mail."
+        },
+        "transmitter": {
+          "name": "Transmitter",
+          "description": "G6-Transmitter im Paket; leer = Standard (1 je G6-Quartalslieferung)."
         }
       }
     },
@@ -334,7 +346,7 @@
     },
     "inventur": {
       "name": "Inventur",
-      "description": "Setzt den Bestand zu einem Zeitpunkt (Standard jetzt). Danach zählen Lieferungen (+) und gesetzte Sensoren (−) automatisch.",
+      "description": "Setzt den Bestand zu einem Zeitpunkt (Standard jetzt). Danach zählen Lieferungen (+) und gesetzte Sensoren (−) automatisch. Mit „Transmitter“ wird auch der Vorrat an G6-Transmittern gezählt.",
       "fields": {
         "bestand": {
           "name": "Bestand",
@@ -351,6 +363,10 @@
         "zeit": {
           "name": "Zeitpunkt",
           "description": "Zeitpunkt der Zählung."
+        },
+        "transmitter": {
+          "name": "Transmitter",
+          "description": "Unbenutzte G6-Transmitter im Vorrat; leer = Transmitter-Zählung unverändert."
         }
       }
     },
@@ -429,6 +445,56 @@
         "erkennen": {
           "name": "Erkennen",
           "description": "Statt Text die erkannten Felder zeigen."
+        }
+      }
+    },
+    "transmitter": {
+      "name": "Transmitter",
+      "description": "G6-Transmitter eintragen oder ändern (speichern; ohne ID = neuer), löschen (Papierkorb) oder den Vorrat zählen (zaehlen). Reklamieren über „Reklamation“ mit der Transmitter-ID.",
+      "fields": {
+        "aktion": {
+          "name": "Aktion",
+          "description": "speichern, loeschen oder zaehlen."
+        },
+        "id": {
+          "name": "ID",
+          "description": "Transmitter-ID (t…); leer = neuer Transmitter."
+        },
+        "sn": {
+          "name": "Seriennummer",
+          "description": "Steht auf Transmitter und Verpackung."
+        },
+        "gestartet": {
+          "name": "In Betrieb seit",
+          "description": "Datum und Uhrzeit (Standard jetzt)."
+        },
+        "entfernt": {
+          "name": "Nicht mehr benutzt seit",
+          "description": "Nur bei Ausfall – sonst gilt der nächste Transmitter."
+        },
+        "lot": {
+          "name": "LOT",
+          "description": "Charge von der Verpackung."
+        },
+        "verwendbar_bis": {
+          "name": "Verwendbar bis",
+          "description": "Datum von der Verpackung."
+        },
+        "notiz": {
+          "name": "Notiz",
+          "description": "Freitext."
+        },
+        "aus_bestand": {
+          "name": "Aus dem Vorrat",
+          "description": "Aus = zählt nicht gegen den Bestand."
+        },
+        "anzahl": {
+          "name": "Anzahl",
+          "description": "Bei zaehlen: unbenutzte Transmitter im Vorrat."
+        },
+        "zeit": {
+          "name": "Zeitpunkt",
+          "description": "Bei zaehlen: Zeitpunkt der Zählung (Standard jetzt)."
         }
       }
     }

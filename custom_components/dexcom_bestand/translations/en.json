@@ -32,12 +32,16 @@
         "description": "{cgm_hinweis}{notify_hinweis}",
         "data": {
           "sensorende": "Sensor end (CGM integration)",
+          "transmitter_ende": "Transmitter end (G6, optional)",
+          "transmitter_id": "Transmitter ID (optional)",
           "notify": "Phone for notifications",
           "seitenleiste": "Sidebar entry",
           "titel": "Sidebar title"
         },
         "data_description": {
           "sensorende": "Timestamp sensor with the end of the running sensor session.",
+          "transmitter_ende": "Timestamp sensor with the end of the running G6 transmitter (e.g. from YourLoops/DBLG1). When it changes, a new transmitter is recorded automatically. Empty = enter it in the card.",
+          "transmitter_id": "Entity holding the transmitter serial number (attribute transmitter_id or its state).",
           "notify": "notify service of the phone (mobile_app_…). Empty = no push notifications."
         }
       },
@@ -71,10 +75,16 @@
           "mail": "Mailbox",
           "mails_ab": "Consider mails from",
           "sensorende": "Sensor end (CGM integration)",
+          "transmitter_ende": "Transmitter end (G6, optional)",
+          "transmitter_id": "Transmitter ID (optional)",
           "notify": "Phone for notifications",
           "seitenleiste": "Sidebar entry",
           "titel": "Sidebar title",
           "link": "Page opened by notifications"
+        },
+        "data_description": {
+          "transmitter_ende": "Timestamp sensor with the end of the running G6 transmitter (e.g. from YourLoops/DBLG1). When it changes, a new transmitter is recorded automatically. Empty = enter it in the card.",
+          "transmitter_id": "Entity holding the transmitter serial number (attribute transmitter_id or its state)."
         }
       },
       "zugang": {
@@ -189,11 +199,11 @@
     },
     "reklamation": {
       "name": "Reklamation",
-      "description": "Sensor als reklamiert markieren, ändern, Ersatz erhalten, abschließen oder aufheben.",
+      "description": "Sensor oder Transmitter als reklamiert markieren, ändern, Ersatz erhalten, abschließen oder aufheben.",
       "fields": {
         "sensor_id": {
-          "name": "Sensor",
-          "description": "Sensor-ID."
+          "name": "Sensor oder Transmitter",
+          "description": "ID des Sensors (s…) oder Transmitters (t…)."
         },
         "aktion": {
           "name": "Aktion",
@@ -235,7 +245,7 @@
         },
         "sensor_id": {
           "name": "Sensor",
-          "description": "Bei zuordnen; leer = Zuordnung lösen."
+          "description": "Sensor oder Transmitter (bei zuordnen; leer = Zuordnung lösen)."
         },
         "am": {
           "name": "Am",
@@ -302,6 +312,10 @@
         "sendungsnr": {
           "name": "Sendungsnummer",
           "description": "DHL-Sendungsnummer; leer = wie aus der Mail."
+        },
+        "transmitter": {
+          "name": "Transmitter",
+          "description": "G6-Transmitter im Paket; leer = Standard (1 je G6-Quartalslieferung)."
         }
       }
     },
@@ -321,7 +335,7 @@
     },
     "inventur": {
       "name": "Inventur",
-      "description": "Setzt den Bestand zu einem Zeitpunkt (Standard jetzt). Danach zählen Lieferungen (+) und gesetzte Sensoren (−) automatisch.",
+      "description": "Setzt den Bestand zu einem Zeitpunkt (Standard jetzt). Danach zählen Lieferungen (+) und gesetzte Sensoren (−) automatisch. Mit „Transmitter“ wird auch der Vorrat an G6-Transmittern gezählt.",
       "fields": {
         "bestand": {
           "name": "Bestand",
@@ -338,6 +352,10 @@
         "zeit": {
           "name": "Zeitpunkt",
           "description": "Zeitpunkt der Zählung."
+        },
+        "transmitter": {
+          "name": "Transmitter",
+          "description": "Unbenutzte G6-Transmitter im Vorrat; leer = Transmitter-Zählung unverändert."
         }
       }
     },
@@ -416,6 +434,56 @@
         "erkennen": {
           "name": "Erkennen",
           "description": "Statt Text die erkannten Felder zeigen."
+        }
+      }
+    },
+    "transmitter": {
+      "name": "Transmitter",
+      "description": "G6-Transmitter eintragen oder ändern (speichern; ohne ID = neuer), löschen (Papierkorb) oder den Vorrat zählen (zaehlen). Reklamieren über „Reklamation“ mit der Transmitter-ID.",
+      "fields": {
+        "aktion": {
+          "name": "Aktion",
+          "description": "speichern, loeschen oder zaehlen."
+        },
+        "id": {
+          "name": "ID",
+          "description": "Transmitter-ID (t…); leer = neuer Transmitter."
+        },
+        "sn": {
+          "name": "Seriennummer",
+          "description": "Steht auf Transmitter und Verpackung."
+        },
+        "gestartet": {
+          "name": "In Betrieb seit",
+          "description": "Datum und Uhrzeit (Standard jetzt)."
+        },
+        "entfernt": {
+          "name": "Nicht mehr benutzt seit",
+          "description": "Nur bei Ausfall – sonst gilt der nächste Transmitter."
+        },
+        "lot": {
+          "name": "LOT",
+          "description": "Charge von der Verpackung."
+        },
+        "verwendbar_bis": {
+          "name": "Verwendbar bis",
+          "description": "Datum von der Verpackung."
+        },
+        "notiz": {
+          "name": "Notiz",
+          "description": "Freitext."
+        },
+        "aus_bestand": {
+          "name": "Aus dem Vorrat",
+          "description": "Aus = zählt nicht gegen den Bestand."
+        },
+        "anzahl": {
+          "name": "Anzahl",
+          "description": "Bei zaehlen: unbenutzte Transmitter im Vorrat."
+        },
+        "zeit": {
+          "name": "Zeitpunkt",
+          "description": "Bei zaehlen: Zeitpunkt der Zählung (Standard jetzt)."
         }
       }
     }

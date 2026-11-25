@@ -32,7 +32,8 @@ _STANDARD_LAUFZEIT = {
     "G7 15 Tage": {"tage": 15, "nachlauf_h": 12},
     "ONE+": {"tage": 10, "nachlauf_h": 12},
 }
-_STANDARD_MELDEN = {"wechsel": True, "neu_erkannt": True, "lieferung": True, "ersatz": True, "rezept": True}
+_STANDARD_MELDEN = {"wechsel": True, "neu_erkannt": True, "lieferung": True, "ersatz": True, "rezept": True,
+                   "transmitter": True}
 _STANDARD_EINST = {
     "laufzeit": _STANDARD_LAUFZEIT,
     "modell_lieferung": "G7",
@@ -51,9 +52,14 @@ _STANDARD_EINST = {
     "start": "",
     "foto_tage": 7,
     "gtin_modell": {"00386270000927": "G6"},
+    "transmitter_tage": 90,
+    "transmitter_je_lieferung": 1,
+    "transmitter_vorlauf_tage": 7,
 }
 _SENSOR_FELDER = ["modell", "ref", "lot", "hergestellt", "verwendbar_bis", "gtin", "code", "sn",
                   "gesetzt", "entfernt", "notiz", "quelle", "aus_bestand"]
+_TRANSMITTER_FELDER = ["sn", "lot", "verwendbar_bis", "gestartet", "entfernt", "notiz", "quelle", "aus_bestand"]
+TRANSMITTER_AKTIVIEREN_MONATE = 5  # Dexcom: G6-Transmitter innerhalb von 5 Monaten nach Versand aktivieren
 _WT = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 _ST_LIEF = {"unterwegs": "unterwegs", "heute": "heute", "gleich": "heute", "verzoegert": "verzoegert",
             "abholbereit": "abholbereit", "zurueck": "zurueck", "info": "unterwegs", "zugestellt": "unterwegs"}
@@ -366,7 +372,8 @@ def _neue_lieferung(lid, art, versendet):
     return {"id": lid, "art": art, "versendet": versendet, "bestellt": None, "sendungsnr": None, "dhl": [],
             "quellen": [], "faelle": [], "anzahl_mail": None, "modell_mail": None, "zugestellt_mail": None,
             "zeitraum_von": None, "zeitraum_bis": None, "teil": False, "letzte": False, "folgerezept": None,
-            "bestellnr": None, "manuell": False, "notiz": "", "kundendienst": False, "abgeleitet": False}
+            "bestellnr": None, "manuell": False, "notiz": "", "kundendienst": False, "abgeleitet": False,
+            "transmitter_mail": None}
 
 
 def _ableiten(mails, daten, jetzt, tz):
@@ -376,6 +383,8 @@ def _ableiten(mails, daten, jetzt, tz):
     kl = korr.get("lieferungen") or {}
     kf = korr.get("faelle") or {}
     sensoren = daten.get("sensoren") or []
+    # reklamierbar sind Sensoren („s…“) und Transmitter („t…“)
+    objekte = sensoren + [t for t in (daten.get("transmitter") or []) if isinstance(t, dict) and t.get("id")]
     inv_zeit = _zeit((daten.get("inventur") or {}).get("zeit"), tz)
     liste = []
     for m in mails.values():
@@ -390,7 +399,7 @@ def _ableiten(mails, daten, jetzt, tz):
     # Reklamationen aus der Karte ↔ Fall-Mails verknüpfen (ausdrücklich über die Fallnummer, sonst ±3 Tage)
     fall_mails = [(md, m) for (md, u, m) in liste if m["typ"] == "fall"]
     fall_sensor = {}
-    for s in sensoren:
+    for s in objekte:
         r = s.get("reklamation") or {}
         fn = _fall_norm(r.get("fall"))
         if r.get("am") and fn:
@@ -403,7 +412,7 @@ def _ableiten(mails, daten, jetzt, tz):
     gesperrt = set([fid for fid, k in kf.items() if k.get("sensor") == ""])
     belegt = set(fall_sensor.values())
     karte_faelle = []
-    for s in sorted(sensoren, key=lambda x: str((x.get("reklamation") or {}).get("am") or "")):
+    for s in sorted(objekte, key=lambda x: str((x.get("reklamation") or {}).get("am") or "")):
         r = s.get("reklamation") or {}
         if not r.get("am") or s["id"] in belegt:
             continue
@@ -542,10 +551,25 @@ def _ableiten(mails, daten, jetzt, tz):
         L = _neue_lieferung(h["id"], h.get("art") or "sonstige", _zeit(h.get("versendet"), tz))
         L.update({"manuell": True, "anzahl_mail": h.get("anzahl"), "modell_mail": h.get("modell"),
                   "zugestellt_mail": _zeit(h.get("zugestellt_am"), tz), "notiz": h.get("notiz") or "",
-                  "zeitraum_von": h.get("zeitraum_von"), "zeitraum_bis": h.get("zeitraum_bis"), "sendungsnr": h.get("sendungsnr")})
+                  "zeitraum_von": h.get("zeitraum_von"), "zeitraum_bis": h.get("zeitraum_bis"), "sendungsnr": h.get("sendungsnr"),
+                  "transmitter_mail": h.get("transmitter")})
         lief.append(L)
 
     # Korrekturen, Standardwerte, Status
+    # (Ersatz für einen reklamierten Transmitter enthält standardmäßig einen Transmitter statt eines Sensors)
+    fall_nach_id = {}
+    for f in faelle:
+        fall_nach_id[f["id"]] = f
+
+    def fall_objekt(fid):
+        f = fall_nach_id.get(fid)
+        if f is None:
+            return None
+        k2 = kf.get(fid) or {}
+        if f["quelle"] == "mail" and k2.get("sensor") is not None:
+            return k2.get("sensor") or None
+        return f.get("sensor")
+
     ml = e.get("modell_lieferung") or "G7"
     for L in lief:
         k = {} if L["manuell"] else (kl.get(L["id"]) or {})
@@ -569,6 +593,7 @@ def _ableiten(mails, daten, jetzt, tz):
                 angenommen = True
         L["zugestellt_am"] = z
         L["zugestellt_angenommen"] = angenommen
+        tx_ersatz = L["art"] == "ersatz" and bool([x for x in (L.get("faelle") or []) if str(fall_objekt(x) or "").startswith("t")])
         anz = k.get("anzahl")
         if anz is None or anz == "":
             anz = L.get("anzahl_mail")
@@ -576,7 +601,7 @@ def _ableiten(mails, daten, jetzt, tz):
             if L["art"] == "quartal":
                 anz = e.get("quartal_anzahl", 9)
             elif L["art"] == "ersatz":
-                anz = e.get("ersatz_anzahl", 1)
+                anz = 0 if tx_ersatz else e.get("ersatz_anzahl", 1)
             else:
                 anz = 0
         try:
@@ -588,6 +613,20 @@ def _ableiten(mails, daten, jetzt, tz):
         if mod is None and (inv_zeit is None or bezug is None or bezug > inv_zeit):
             mod = ml
         L["modell"] = mod
+        tx = k.get("transmitter")
+        if tx is None or tx == "":
+            tx = L.get("transmitter_mail")
+        if tx is None or tx == "":
+            if L["art"] == "quartal" and mod == "G6" and L["anzahl"] > 0:
+                tx = e.get("transmitter_je_lieferung", 1)
+            elif tx_ersatz:
+                tx = 1
+            else:
+                tx = 0
+        try:
+            L["transmitter"] = max(0, int(tx))
+        except Exception:
+            L["transmitter"] = 0
         L["aus"] = bool(k.get("aus"))
         if k.get("notiz") is not None and not L["manuell"]:
             L["notiz"] = k.get("notiz") or ""
@@ -613,7 +652,7 @@ def _ableiten(mails, daten, jetzt, tz):
     for L in lief:
         nach_id[L["id"]] = L
     sensor_nach_id = {}
-    for s in sensoren:
+    for s in objekte:
         sensor_nach_id[s["id"]] = s
     for f in faelle:
         k = kf.get(f["id"]) or {}
@@ -726,6 +765,165 @@ def _sensoren_auswerten(sensoren, einst, jetzt, tz):
     return aus
 
 
+def _plus_monate(d, n):
+    m = d.month - 1 + n
+    j = d.year + m // 12
+    m = m % 12 + 1
+    schalt = j % 4 == 0 and (j % 100 != 0 or j % 400 == 0)
+    tage = [31, 29 if schalt else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+    return date(j, m, min(d.day, tage))
+
+
+def _plus_abs(dt, tage):
+    """dt + tage als echte Zeitspanne (über eine Zeitumstellung hinweg ohne Stundenversatz)."""
+    return datetime.fromtimestamp(dt.timestamp() + tage * 86400.0, dt.tzinfo)
+
+
+def _transmitter_tage(einst):
+    try:
+        return min(200.0, max(1.0, float(einst.get("transmitter_tage", 90))))
+    except Exception:
+        return 90.0
+
+
+def _transmitter_auswerten(liste, sens, einst, jetzt, tz):
+    """G6-Transmitter: Laufzeit ab Aktivierung (Standard 90 Tage); neue Sensorsitzung nur, solange noch
+    eine ganze Sensorlaufzeit übrig ist („start_bis“). Ein neuer Transmitter beendet den vorigen."""
+    tage = _transmitter_tage(einst)
+    s_tage = _laufzeit(einst, "G6")[0]
+    srt = sorted([t for t in liste if _zeit(t.get("gestartet"), tz) is not None], key=lambda t: _zeit(t.get("gestartet"), tz))
+    aus = []
+    for i, t in enumerate(srt):
+        st = _zeit(t.get("gestartet"), tz)
+        ende = _zeit(t.get("ende_quelle"), tz) or _plus_abs(st, tage)
+        weg = _zeit(t.get("entfernt"), tz)
+        weg_manuell = weg is not None
+        naechster = _zeit(srt[i + 1].get("gestartet"), tz) if i + 1 < len(srt) else None
+        if weg is None:
+            weg = naechster
+        soll = (ende - st).total_seconds() / 86400.0
+        gehalten = None
+        if weg is not None:
+            gehalten = max(0.0, (min(weg, ende) - st).total_seconds() / 86400.0)
+            status = "vorzeitig" if gehalten < soll - s_tage - 1 else "verbraucht"
+        elif jetzt < ende:
+            status = "laeuft"
+        else:
+            status = "abgelaufen"
+        # Sensoren in seiner Zeit (einer, der kurz vor dem nächsten Transmitter gesetzt wurde, gehört zu jenem)
+        bis = naechster - timedelta(hours=12) if (naechster is not None and not weg_manuell) else (weg if weg is not None else ende)
+        n = 0
+        for s in sens:
+            sg = _zeit(s.get("start") or s.get("gesetzt"), tz)
+            if s.get("modell") == "G6" and sg is not None and st - timedelta(hours=12) <= sg < bis:
+                n += 1
+        x = dict(t)
+        x.update({"start": _iso(st), "ende": _iso(ende), "start_bis": _iso(_plus_abs(ende, -s_tage)),
+                  "entfernt_eff": _iso(weg), "entfernt_manuell": weg_manuell,
+                  "gehalten_tage": round(gehalten, 1) if gehalten is not None else None, "soll_tage": round(soll, 1),
+                  "status": status, "tag": int((jetzt - st).total_seconds() // 86400) + 1 if status == "laeuft" else None,
+                  "rest_tage": round((ende - jetzt).total_seconds() / 86400.0, 1) if status == "laeuft" else None,
+                  "sensoren_n": n})
+        aus.append(x)
+    return aus
+
+
+def _transmitter_zu(daten, zeitpunkt, tz):
+    """Transmitter, der zu einem Zeitpunkt (z. B. Setzen eines G6-Sensors) lief – oder None."""
+    if zeitpunkt is None:
+        return None
+    tage = _transmitter_tage(daten.get("einstellungen") or {})
+    srt = sorted([t for t in (daten.get("transmitter") or []) if _zeit(t.get("gestartet"), tz) is not None],
+                 key=lambda t: _zeit(t.get("gestartet"), tz))
+    treffer = None
+    for i, t in enumerate(srt):
+        st = _zeit(t.get("gestartet"), tz)
+        ende = _zeit(t.get("ende_quelle"), tz) or _plus_abs(st, tage)
+        weg = _zeit(t.get("entfernt"), tz)
+        if weg is None and i + 1 < len(srt):
+            weg = _zeit(srt[i + 1].get("gestartet"), tz)
+        bis = min(weg, ende) if weg is not None else ende
+        if st - timedelta(hours=12) <= zeitpunkt < bis:
+            treffer = t
+    return treffer
+
+
+def _transmitter_bestand(daten, lief, tz):
+    """Transmitter im Vorrat: Zählung + gelieferte − seitdem gestartete. None, solange nie gezählt wurde."""
+    inv = daten.get("transmitter_inventur") or {}
+    t0 = _zeit(inv.get("zeit"), tz)
+    if t0 is None or inv.get("anzahl") is None:
+        return None
+    try:
+        n0 = int(inv.get("anzahl"))
+    except Exception:
+        n0 = 0
+    zu = []
+    for L in lief:
+        if L.get("aus") or not L.get("transmitter"):
+            continue
+        z = L.get("zugestellt_am")
+        if z is not None and z > t0:
+            zu.append((z, L.get("versendet") or z, int(L["transmitter"]), L["id"]))
+    zu.sort(key=lambda x: x[0])
+    verbraucht = 0
+    for t in daten.get("transmitter") or []:
+        g = _zeit(t.get("gestartet"), tz)
+        if g is not None and g > t0 and t.get("aus_bestand", True) is not False:
+            verbraucht += 1
+    geliefert = sum([x[2] for x in zu])
+    anzahl = n0 + geliefert - verbraucht
+    # der älteste noch vorhandene gelieferte (verbraucht wird der Reihe nach, gezählte zuerst)
+    rest = max(0, verbraucht - n0)
+    aelteste = None
+    for (z, v, k, lid) in zu:
+        if rest >= k:
+            rest -= k
+            continue
+        aelteste = {"lieferung": lid, "versendet": _iso(v), "aktivieren_bis": _plus_monate(v.date(), TRANSMITTER_AKTIVIEREN_MONATE).isoformat()}
+        break
+    return {"anzahl": anzahl, "seit": inv.get("zeit"), "inventur": n0, "geliefert": geliefert, "verbraucht": verbraucht,
+            "aelteste": aelteste if anzahl > 0 else None}
+
+
+def _transmitter_lage(daten, lief, sens, aktuell, e, jetzt, tz):
+    """Transmitter: Liste, aktueller, Bestand und der Sensorwechsel, ab dem ein neuer nötig ist."""
+    liste = _transmitter_auswerten(daten.get("transmitter") or [], sens, e, jetzt, tz)
+    akt = None
+    for t in reversed(liste):
+        if t["status"] == "laeuft":
+            akt = t
+            break
+    if akt is None and liste and liste[-1]["status"] == "abgelaufen":
+        akt = liste[-1]
+    wechsel = None
+    if akt is not None and akt["status"] == "laeuft":
+        sb = _zeit(akt["start_bis"], tz)
+        wechsel = sb
+        if aktuell and aktuell.get("modell") == "G6":
+            s_tage = _laufzeit(e, "G6")[0]
+            w = _zeit(aktuell.get("ende"), tz) if aktuell.get("status") == "laeuft" else jetzt
+            n = 0
+            while w is not None and w <= sb and n < 40:
+                w = _plus_abs(w, s_tage)
+                n += 1
+            if w is not None:
+                wechsel = w
+    # G6-Sensoren dem jeweils laufenden Transmitter zuordnen (nur für die Anzeige)
+    for s in sens:
+        if s.get("modell") != "G6":
+            continue
+        sg = _zeit(s.get("start") or s.get("gesetzt"), tz)
+        for t in liste:
+            st = _zeit(t["start"], tz)
+            bis = _zeit(t["entfernt_eff"], tz) or _zeit(t["ende"], tz)
+            if sg is not None and st - timedelta(hours=12) <= sg < bis:
+                s["transmitter_info"] = {"id": t["id"], "sn": t.get("sn") or ""}
+    best = _transmitter_bestand(daten, lief, tz)
+    g6 = [s for s in sens if s.get("modell") == "G6" and (_zeit(s.get("start") or s.get("gesetzt"), tz) or jetzt) >= jetzt - timedelta(days=120)]
+    relevant = bool(liste) or best is not None or bool(g6) or e.get("modell_lieferung") == "G6" or bool([L for L in lief if L.get("transmitter")])
+    return {"liste": liste, "aktuell": akt, "bestand": best, "wechsel_am": wechsel, "relevant": relevant}
+
 def _bestand(daten, lief, tz):
     inv = daten.get("inventur") or {}
     t0 = _zeit(inv.get("zeit"), tz)
@@ -793,6 +991,7 @@ def _auswerten(daten, mails, jetzt, tz):
             break
     if aktuell is None and sens and sens[-1]["status"] == "abgelaufen":
         aktuell = sens[-1]
+    txl = _transmitter_lage(daten, lief, sens, aktuell, e, jetzt, tz)
     reicht = None
     basis = _zeit(aktuell["ende"], tz) if (aktuell and aktuell.get("ende") and aktuell["status"] == "laeuft") else jetzt
     if best is not None:
@@ -835,8 +1034,37 @@ def _auswerten(daten, mails, jetzt, tz):
     for s in sens:
         if s.get("quelle") == "automatisch" and not s.get("lot") and s["status"] in ("laeuft", "nachlauf"):
             warn.append({"art": "foto", "text": "Aktueller Sensor ohne Etikett-Daten – Etikett-Foto in der Karte aufnehmen."})
+    # Transmitter (nur solange G6 im Einsatz ist)
+    t_akt = txl["aktuell"]
+    tb = txl["bestand"]
+    if txl["relevant"] and (aktuell is None or aktuell.get("modell") == "G6"):
+        try:
+            t_vor = float(e.get("transmitter_vorlauf_tage", 7))
+        except Exception:
+            t_vor = 7.0
+        leer = tb is not None and tb["anzahl"] <= 0
+        tw = txl["wechsel_am"]
+        if t_akt is not None and t_akt["status"] == "laeuft" and tw is not None:
+            bis_w = (tw - jetzt).total_seconds() / 86400.0
+            if bis_w <= t_vor:
+                text = ("Transmitter" + ((" " + t_akt["sn"]) if t_akt.get("sn") else "") + ": beim Sensorwechsel " + _wann(tw, jetzt)
+                        + " einen neuen einsetzen (neue Sitzung nur bis " + _wann(_zeit(t_akt["start_bis"], tz), jetzt) + ").")
+                warn.append({"art": "transmitter", "text": text + (" Kein Transmitter im Bestand!" if leer else "")})
+            elif leer and bis_w <= 30 and not [L for L in unterwegs if L.get("transmitter")]:
+                warn.append({"art": "transmitter", "text": "Kein Transmitter mehr im Bestand – der jetzige reicht bis zum Sensorwechsel " + _wann(tw, jetzt) + "."})
+        elif (t_akt is not None and t_akt["status"] == "abgelaufen" and aktuell is not None and aktuell.get("status") in ("laeuft", "nachlauf")
+              and (_zeit(aktuell.get("start") or aktuell.get("gesetzt"), tz) or jetzt) > _zeit(t_akt["start_bis"], tz)):
+            warn.append({"art": "transmitter", "text": "Neuer Transmitter fehlt – der vom " + _zeit(t_akt["start"], tz).strftime("%d.%m.")
+                         + " ist seit " + _zeit(t_akt["ende"], tz).strftime("%d.%m.") + " abgelaufen. In der Karte unter „Transmitter“ eintragen."})
+        if tb is not None and tb["anzahl"] < 0:
+            warn.append({"art": "transmitter", "text": "Transmitter-Bestand ist negativ (" + str(tb["anzahl"]) + ") – bitte zählen."})
+        if tb is not None and tb.get("aelteste"):
+            ab = _datum(tb["aelteste"]["aktivieren_bis"])
+            if ab is not None and (ab - jetzt.date()).days <= 14 and (tw is None or tw.date() > ab):
+                warn.append({"art": "transmitter", "text": "Transmitter aus der Lieferung vom " + _zeit(tb["aelteste"]["versendet"], tz).strftime("%d.%m.")
+                             + " bis " + ab.strftime("%d.%m.%Y") + " in Betrieb nehmen (Dexcom: innerhalb von 5 Monaten nach Versand)."})
     return {"abl": abl, "sensoren": sens, "aktuell": aktuell, "bestand": best, "reicht_bis": reicht,
-            "unterwegs": [L["id"] for L in unterwegs], "folgerezept": rz, "warnungen": warn}
+            "unterwegs": [L["id"] for L in unterwegs], "folgerezept": rz, "warnungen": warn, "transmitter": txl}
 
 
 def _meldungen_faellig(a, daten, jetzt, tz):
@@ -866,9 +1094,44 @@ def _meldungen_faellig(a, daten, jetzt, tz):
         key = "wechsel:" + akt["id"] + ":" + akt["ende"][:16]
         if t <= jetzt < ende and key not in gem:
             text = akt.get("modell", "") + "-Sensor vom " + _zeit(akt["start"] or akt["gesetzt"], tz).strftime("%d.%m.") + " läuft " + _wann(ende, jetzt) + " Uhr ab. " + bestand_txt()
+            txw = (a.get("transmitter") or {}).get("wechsel_am")
+            if txw is not None and akt.get("modell") == "G6" and abs((txw - ende).total_seconds()) < 3600:
+                txb = (a.get("transmitter") or {}).get("bestand")
+                text = text.strip() + " Diesmal auch den Transmitter wechseln – der jetzige startet keine neue Sitzung mehr."
+                if txb is not None:
+                    text += " Transmitter im Bestand: " + str(txb["anzahl"]) + "."
             aus.append({"key": key, "art": "wechsel", "titel": "Dexcom: Sensorwechsel", "text": text.strip(), "tag": "dexcom-wechsel"})
     if not (9 <= jetzt.hour < 21):
         return aus
+    txl = a.get("transmitter") or {}
+    ta = txl.get("aktuell")
+    tw = txl.get("wechsel_am")
+    tb = txl.get("bestand")
+    if (melden.get("transmitter") and txl.get("relevant") and ta is not None and ta["status"] == "laeuft" and tw is not None
+            and (akt is None or akt.get("modell") == "G6")):
+        try:
+            t_vor = float(e.get("transmitter_vorlauf_tage", 7))
+        except Exception:
+            t_vor = 7.0
+        bis_w = (tw - jetzt).total_seconds() / 86400.0
+        leer = tb is not None and tb["anzahl"] <= 0
+        sn = (" " + ta["sn"]) if ta.get("sn") else ""
+        if bis_w <= t_vor:
+            key = "transmitter:" + ta["id"] + ":" + str(ta["start_bis"])[:10]
+            if key not in gem:
+                text = ("Transmitter" + sn + " vom " + _zeit(ta["start"], tz).strftime("%d.%m.") + ": neue Sitzung nur bis "
+                        + _wann(_zeit(ta["start_bis"], tz), jetzt) + " – beim Sensorwechsel " + _wann(tw, jetzt) + " einen neuen Transmitter einsetzen. ")
+                if leer:
+                    text += "Kein Transmitter im Bestand! Kundenservice " + KUNDENSERVICE + "."
+                elif tb is not None:
+                    text += "Im Bestand: " + str(tb["anzahl"]) + "."
+                aus.append({"key": key, "art": "transmitter", "titel": "Dexcom: Transmitter wechseln", "text": text.strip(), "tag": "dexcom-transmitter"})
+        elif leer and bis_w <= 21:
+            unterwegs_tx = [L for L in a["abl"]["lieferungen"] if L["id"] in a["unterwegs"] and L.get("transmitter")]
+            key = "transmitter_leer:" + ta["id"]
+            if key not in gem and not unterwegs_tx:
+                text = "Kein Transmitter mehr im Bestand. Der jetzige" + sn + " reicht bis zum Sensorwechsel " + _wann(tw, jetzt) + ". Kundenservice " + KUNDENSERVICE + "."
+                aus.append({"key": key, "art": "transmitter", "titel": "Dexcom: kein Transmitter", "text": text, "tag": "dexcom-transmitter"})
     n = a["abl"]["naechste"]
     if melden.get("lieferung"):
         if n and n["status"] == "ueberfaellig":
@@ -957,6 +1220,8 @@ def _normalisieren(d):
         "version": 1,
         "zaehler": int(d.get("zaehler") or 0),
         "sensoren": [s for s in (d.get("sensoren") or []) if isinstance(s, dict) and s.get("id")],
+        "transmitter": [t for t in (d.get("transmitter") or []) if isinstance(t, dict) and t.get("id")],
+        "transmitter_inventur": d.get("transmitter_inventur") or None,
         "lieferungen": [x for x in (d.get("lieferungen") or []) if isinstance(x, dict) and x.get("id")],
         "korrekturen": {"lieferungen": dict(k.get("lieferungen") or {}), "faelle": dict(k.get("faelle") or {}),
                         "naechste": dict(k.get("naechste") or {}), "rezept": dict(k.get("rezept") or {})},
@@ -1066,14 +1331,20 @@ def _sensor_speichern(daten, f, jetzt, tz, je):
         s["modell"] = _modell_vermuten(daten, je)
         geaendert.append("modell")
     if s.get("modell") == "G6" and not s.get("sn"):
-        vor = sorted([x for x in sensoren if x is not s and x.get("modell") == "G6" and x.get("sn") and x.get("gesetzt")],
-                     key=lambda x: str(x.get("gesetzt")))
-        if vor:
-            vg = _zeit(vor[-1]["gesetzt"], tz)
-            sg = _zeit(s.get("gesetzt"), tz)
-            if vg and sg and timedelta(0) <= sg - vg <= timedelta(days=100):
-                s["sn"] = vor[-1]["sn"]
+        tr = _transmitter_zu(daten, _zeit(s.get("gesetzt"), tz), tz)
+        if tr is not None:
+            if tr.get("sn"):
+                s["sn"] = tr["sn"]
                 s["sn_uebernommen"] = True
+        else:
+            vor = sorted([x for x in sensoren if x is not s and x.get("modell") == "G6" and x.get("sn") and x.get("gesetzt")],
+                         key=lambda x: str(x.get("gesetzt")))
+            if vor:
+                vg = _zeit(vor[-1]["gesetzt"], tz)
+                sg = _zeit(s.get("gesetzt"), tz)
+                if vg and sg and timedelta(0) <= sg - vg <= timedelta(days=100):
+                    s["sn"] = vor[-1]["sn"]
+                    s["sn_uebernommen"] = True
     s["geaendert"] = _iso(jetzt)
     if aktion == "angelegt":
         _eintrag(s, jetzt, "angelegt (" + (s.get("quelle") or "hand") + ")")
@@ -1089,13 +1360,184 @@ def _sensor_speichern(daten, f, jetzt, tz, je):
     return {"ok": True, "id": s["id"], "aktion": aktion, "geaendert": geaendert}
 
 
+def _leerer_transmitter(jetzt):
+    return {"id": _neue_id("t"), "sn": "", "lot": "", "verwendbar_bis": None, "gestartet": None, "ende_quelle": None,
+            "entfernt": None, "notiz": "", "quelle": "hand", "aus_bestand": True, "reklamation": None,
+            "erstellt": _iso(jetzt), "geaendert": _iso(jetzt), "verlauf": []}
+
+
+def _sn_norm(x):
+    return re.sub(r"\s+", "", str(x or "")).upper()[:30]
+
+
+def _sn_gleich(a, b):
+    a = _sn_norm(a)
+    b = _sn_norm(b)
+    if not a or not b:
+        return False
+    return a == b or a.split("-")[0] == b.split("-")[0]
+
+
+def _transmitter_feld(k, v, tz):
+    if k == "sn":
+        return _sn_norm(v)
+    if k == "verwendbar_bis":
+        d = _datum(v)
+        return d.isoformat() if d else None
+    if k in ("gestartet", "entfernt"):
+        z = _zeit(v, tz)
+        return _iso(z) if z else None
+    if k == "aus_bestand":
+        return v is not False and str(v).lower() not in ("false", "0", "nein", "no")
+    if k == "notiz":
+        return str(v if v is not None else "").strip()[:500]
+    if k == "quelle":
+        x = str(v or "").strip().lower()
+        return x if x in ("hand", "automatisch", "foto") else "hand"
+    return _txt(v, 30)
+
+
+def _transmitter_aktion(daten, p, jetzt, tz):
+    """Transmitter anlegen oder ändern (speichern), löschen (Papierkorb) oder den Vorrat zählen (zaehlen)."""
+    aktion = str(p.get("aktion") or "speichern")
+    liste = daten.setdefault("transmitter", [])
+    tid = str(p.get("id") or "").strip()
+    if aktion == "zaehlen":
+        try:
+            n = int(p.get("anzahl"))
+        except Exception:
+            return {"ok": False, "fehler": "Anzahl ist keine Zahl."}
+        if n < 0 or n > 50:
+            return {"ok": False, "fehler": "Anzahl bitte zwischen 0 und 50."}
+        t = _zeit(p.get("zeit"), tz) if p.get("zeit") else jetzt
+        if t is None:
+            return {"ok": False, "fehler": "Zeitpunkt nicht lesbar."}
+        daten["transmitter_inventur"] = {"zeit": _iso(t), "anzahl": n, "erstellt": _iso(jetzt)}
+        return {"ok": True, "aktion": "gezaehlt", "anzahl": n}
+    alt = None
+    if tid:
+        for x in liste:
+            if x["id"] == tid:
+                alt = x
+        if alt is None:
+            return {"ok": False, "fehler": "Transmitter nicht gefunden."}
+    if aktion == "loeschen":
+        if alt is None:
+            return {"ok": False, "fehler": "Kein Transmitter angegeben."}
+        daten["transmitter"] = [x for x in liste if x["id"] != tid]
+        alt["geloescht"] = _iso(jetzt)
+        alt["art"] = "transmitter"
+        daten["papierkorb"].append(alt)
+        daten["papierkorb"] = daten["papierkorb"][-PAPIERKORB:]
+        return {"ok": True, "id": tid, "aktion": "geloescht"}
+    if aktion != "speichern":
+        return {"ok": False, "fehler": "Unbekannte Aktion: " + aktion}
+    for k in ("gestartet", "entfernt"):
+        if p.get(k) not in (None, "") and _zeit(p.get(k), tz) is None:
+            return {"ok": False, "fehler": ("Startzeit" if k == "gestartet" else "Ende") + " nicht lesbar: " + str(p.get(k))}
+    if p.get("verwendbar_bis") not in (None, "") and _datum(p.get("verwendbar_bis")) is None:
+        return {"ok": False, "fehler": "Datum „verwendbar bis“ nicht lesbar."}
+    f = dict(p)
+    art = "geaendert"
+    if alt is None:
+        g = _zeit(f.get("gestartet"), tz) if f.get("gestartet") not in (None, "") else jetzt.replace(second=0, microsecond=0)
+        if g > jetzt + timedelta(hours=1):
+            return {"ok": False, "fehler": "Startzeit liegt in der Zukunft."}
+        sn = _sn_norm(f.get("sn"))
+        for x in liste:
+            if sn and _sn_gleich(sn, x.get("sn")):
+                alt = x
+        if alt is not None:
+            art = "zusammengefuehrt"
+            f.pop("gestartet", None)
+            f.pop("quelle", None)
+        else:
+            art = "angelegt"
+            f["gestartet"] = _iso(g)
+    t = alt if alt is not None else _leerer_transmitter(jetzt)
+    geaendert = []
+    for k in _TRANSMITTER_FELDER:
+        if k not in f or f[k] is None:
+            continue
+        if k == "gestartet" and f[k] == "":
+            continue
+        if art == "zusammengefuehrt" and f[k] == "":
+            continue
+        v = _transmitter_feld(k, f[k], tz)
+        if t.get(k) != v:
+            t[k] = v
+            geaendert.append(k)
+    t["geaendert"] = _iso(jetzt)
+    if art == "angelegt":
+        _eintrag(t, jetzt, "angelegt (" + (t.get("quelle") or "hand") + ")")
+        liste.append(t)
+    elif geaendert:
+        _eintrag(t, jetzt, ("ergänzt: " if art == "zusammengefuehrt" else "geändert: ") + ", ".join(geaendert))
+    return {"ok": True, "id": t["id"], "aktion": art, "geaendert": geaendert}
+
+
+def _transmitter_quelle(daten, ende_s, tid, jetzt, tz):
+    """Transmitter aus dem „Transmitter-Ende“ (und ggf. der ID) einer CGM-Integration erkennen, z. B. YourLoops/DBLG1.
+    Liefert None oder {aktion: neu|angepasst|verknuepft, id, …}."""
+    ende = _zeit(ende_s, tz)
+    if ende is None:
+        return None
+    sn = _sn_norm(tid)
+    if sn in ("UNKNOWN", "UNAVAILABLE", "NONE"):
+        sn = ""
+    start = _plus_abs(ende, -_transmitter_tage(daten.get("einstellungen") or {}))
+    if start > jetzt + timedelta(hours=1):
+        return None
+    liste = daten.setdefault("transmitter", [])
+    for t in liste:
+        eq = _zeit(t.get("ende_quelle"), tz)
+        if (eq is not None and abs((eq - ende).total_seconds()) <= 86400) or (sn and _sn_gleich(sn, t.get("sn"))):
+            was = []
+            if eq is None or abs((eq - ende).total_seconds()) > 60:
+                t["ende_quelle"] = _iso(ende)
+                was.append("Ende " + ende.strftime("%d.%m.%Y %H:%M"))
+            if sn and not t.get("sn"):
+                t["sn"] = sn
+                was.append("SN " + sn)
+            g = _zeit(t.get("gestartet"), tz)
+            if t.get("quelle") == "automatisch" and (g is None or abs((g - start).total_seconds()) > 60):
+                t["gestartet"] = _iso(start)
+                was.append("Start")
+            if not was:
+                return None
+            t["geaendert"] = _iso(jetzt)
+            _eintrag(t, jetzt, "aus der CGM-Integration: " + ", ".join(was))
+            return {"aktion": "angepasst", "id": t["id"]}
+    for t in liste:
+        g = _zeit(t.get("gestartet"), tz)
+        if (g is not None and not t.get("ende_quelle") and abs((g - start).total_seconds()) <= 3 * 86400
+                and not (sn and t.get("sn") and not _sn_gleich(sn, t.get("sn")))):
+            t["ende_quelle"] = _iso(ende)
+            if sn and not t.get("sn"):
+                t["sn"] = sn
+            t["geaendert"] = _iso(jetzt)
+            _eintrag(t, jetzt, "mit der CGM-Integration verknüpft (Ende " + ende.strftime("%d.%m.%Y %H:%M") + ")")
+            return {"aktion": "verknuepft", "id": t["id"]}
+    juengster = None
+    for t in liste:
+        g = _zeit(t.get("gestartet"), tz)
+        if g is not None and (juengster is None or g > juengster):
+            juengster = g
+    if juengster is not None and juengster > start + timedelta(days=3):
+        return None
+    t = _leerer_transmitter(jetzt)
+    t.update({"sn": sn, "gestartet": _iso(start), "ende_quelle": _iso(ende), "quelle": "automatisch"})
+    _eintrag(t, jetzt, "automatisch erkannt (Ende " + ende.strftime("%d.%m.%Y %H:%M") + ")")
+    liste.append(t)
+    return {"aktion": "neu", "id": t["id"], "sn": sn, "start": _iso(start), "ende": _iso(ende)}
+
 def _reklamation_aktion(daten, sid, aktion, p, jetzt, tz):
     s = None
-    for x in daten["sensoren"]:
+    for x in daten["sensoren"] + (daten.get("transmitter") or []):
         if x["id"] == sid:
             s = x
     if s is None:
-        return {"ok": False, "fehler": "Sensor nicht gefunden."}
+        return {"ok": False, "fehler": "Sensor bzw. Transmitter nicht gefunden."}
     r = dict(s.get("reklamation") or {})
     if aktion == "setzen":
         am = _zeit(p.get("am"), tz) if p.get("am") else jetzt
@@ -1154,11 +1596,11 @@ def _fall_aktion(daten, fid, aktion, p, jetzt, tz):
         sid = str(p.get("sensor_id") or "").strip()
         if sid:
             s = None
-            for x in daten["sensoren"]:
+            for x in daten["sensoren"] + (daten.get("transmitter") or []):
                 if x["id"] == sid:
                     s = x
             if s is None:
-                return {"ok": False, "fehler": "Sensor nicht gefunden."}
+                return {"ok": False, "fehler": "Sensor bzw. Transmitter nicht gefunden."}
             r = dict(s.get("reklamation") or {})
             if not r.get("am"):
                 d = _zeit(p.get("fall_datum"), tz) or jetzt
@@ -1170,7 +1612,7 @@ def _fall_aktion(daten, fid, aktion, p, jetzt, tz):
             k["sensor"] = sid
         else:
             k["sensor"] = ""
-            for x in daten["sensoren"]:
+            for x in daten["sensoren"] + (daten.get("transmitter") or []):
                 r = x.get("reklamation") or {}
                 if _fall_norm(r.get("fall")) == fid:
                     r["fall"] = ""
@@ -1224,6 +1666,12 @@ def _lieferung_aktion(daten, p, jetzt, tz):
             return {"ok": False, "fehler": "Datum im Versorgungszeitraum nicht erkannt."}
     if p.get("versendet") not in (None, "") and _zeit(p.get("versendet"), tz) is None:
         return {"ok": False, "fehler": "Versanddatum nicht erkannt."}
+    if p.get("transmitter") not in (None, ""):
+        try:
+            if not 0 <= int(p.get("transmitter")) <= 10:
+                return {"ok": False, "fehler": "Transmitter bitte 0 bis 10."}
+        except Exception:
+            return {"ok": False, "fehler": "Anzahl Transmitter ist keine Zahl."}
     if aktion == "neu" or (not lid and aktion == "speichern"):
         art = p.get("art") if p.get("art") in ARTEN else "sonstige"
         z = _zeit(p.get("zugestellt_am"), tz) if p.get("zugestellt_am") else jetzt
@@ -1235,7 +1683,8 @@ def _lieferung_aktion(daten, p, jetzt, tz):
              "versendet": _iso(_zeit(p.get("versendet"), tz)) if p.get("versendet") else None,
              "zugestellt_am": _iso(z), "notiz": str(p.get("notiz") or "").strip()[:500], "erstellt": _iso(jetzt),
              "zeitraum_von": tag(p.get("zeitraum_von")), "zeitraum_bis": tag(p.get("zeitraum_bis")),
-             "sendungsnr": re.sub(r"\s+", "", str(p.get("sendungsnr") or ""))[:40] or None}
+             "sendungsnr": re.sub(r"\s+", "", str(p.get("sendungsnr") or ""))[:40] or None,
+             "transmitter": int(p["transmitter"]) if p.get("transmitter") not in (None, "") else None}
         daten["lieferungen"].append(h)
         return {"ok": True, "id": h["id"], "aktion": "angelegt"}
     if not lid:
@@ -1289,6 +1738,14 @@ def _lieferung_aktion(daten, p, jetzt, tz):
                 ziel.pop("zugestellt_am", None)
         if "notiz" in p:
             ziel["notiz"] = str(p.get("notiz") or "").strip()[:500]
+        if "transmitter" in p:
+            if p["transmitter"] in (None, ""):
+                if lid.startswith("H"):
+                    ziel["transmitter"] = None
+                else:
+                    ziel.pop("transmitter", None)
+            else:
+                ziel["transmitter"] = int(p["transmitter"])
         # Versand, Versorgungszeitraum, Sendungsnummer (leer = wie aus den Mails)
         neu_werte = {}
         if "versendet" in p:
@@ -1349,7 +1806,8 @@ def _einst_sauber(neu, alt):
         e["melden"] = mel
     for k, lo, hi in (("quartal_anzahl", 0, 60), ("ersatz_anzahl", 0, 10), ("wechsel_vorlauf_h", 0, 48), ("ruhe_von", 0, 23),
                       ("ruhe_bis", 0, 23), ("ersatz_tage", 1, 60), ("rezept_vorlauf_tage", 1, 120), ("knapp_tage", 0, 60),
-                      ("foto_tage", 1, 60)):
+                      ("foto_tage", 1, 60), ("transmitter_tage", 30, 200), ("transmitter_je_lieferung", 0, 5),
+                      ("transmitter_vorlauf_tage", 0, 60)):
         if k in neu and neu[k] not in (None, ""):
             try:
                 v = float(str(neu[k]).replace(",", "."))
@@ -1418,14 +1876,16 @@ def _ausgabe(a, daten, mails_info, jetzt):
                 "zugestellt_angenommen": L.get("zugestellt_angenommen", False), "erwartet": L.get("erwartet"), "sendungsnr": L.get("sendungsnr"), "zeitraum_von": L.get("zeitraum_von"),
                 "zeitraum_bis": L.get("zeitraum_bis"), "teil": L.get("teil"), "letzte": L.get("letzte"),
                 "folgerezept": L.get("folgerezept"), "bestellnr": L.get("bestellnr"), "faelle": L.get("faelle") or [],
-                "manuell": L["manuell"], "aus": L.get("aus", False), "notiz": L.get("notiz") or "", "korrigiert": L.get("korrigiert") or [],
+                "transmitter": L.get("transmitter") or 0, "manuell": L["manuell"], "aus": L.get("aus", False), "notiz": L.get("notiz") or "", "korrigiert": L.get("korrigiert") or [],
                 "herkunft": "kundendienst" if L.get("kundendienst") else ("abgeleitet" if L.get("abgeleitet") else None),
                 "dhl": [{"datum": _iso(x["datum"]), "status": x["status"], "erwartet": x.get("erwartet"), "fenster": x.get("fenster")} for x in L["dhl"]]}
 
     def fall_out(f):
         return {"id": f["id"], "nummern": f["nummern"], "datum": _iso(f["datum"]), "antwort": f["antwort"],
                 "antwort_datum": _iso(f["antwort_datum"]), "lieferung": f["lieferung"], "quelle": f["quelle"],
-                "sensor": f.get("sensor"), "status": f["status"], "ersatz_erhalten_am": _iso(f.get("ersatz_erhalten_am")),
+                "sensor": f.get("sensor"),
+                "objekt": ("transmitter" if str(f.get("sensor") or "").startswith("t") else "sensor") if f.get("sensor") else None,
+                "status": f["status"], "ersatz_erhalten_am": _iso(f.get("ersatz_erhalten_am")),
                 "notiz": f.get("notiz") or "", "historisch": f["historisch"], "antwort_korrigiert": bool(f.get("antwort_korrigiert"))}
 
     lief = sorted(a["abl"]["lieferungen"], key=lambda L: (L.get("zugestellt_am") or L.get("versendet") or L.get("bestellt") or jetzt), reverse=True)
@@ -1440,6 +1900,13 @@ def _ausgabe(a, daten, mails_info, jetzt):
         x["fall_info"] = fall_je_sensor.get(s["id"])
         sens.append(x)
     best = a["bestand"]
+    txl = a.get("transmitter") or {}
+    t_liste = []
+    for t in reversed(txl.get("liste") or []):
+        x = dict(t)
+        x["fall_info"] = fall_je_sensor.get(t["id"])
+        t_liste.append(x)
+    t_akt = txl.get("aktuell")
     return {
         "ok": True,
         "version": daten["zaehler"],
@@ -1460,12 +1927,20 @@ def _ausgabe(a, daten, mails_info, jetzt):
         "warnungen": a["warnungen"],
         "einstellungen": daten["einstellungen"],
         "inventur": daten.get("inventur"),
+        "transmitter": {
+            "relevant": bool(txl.get("relevant")),
+            "liste": t_liste,
+            "aktuell": dict(t_akt, fall_info=fall_je_sensor.get(t_akt["id"])) if t_akt else None,
+            "bestand": txl.get("bestand"),
+            "wechsel_am": _iso(txl.get("wechsel_am")),
+            "inventur": daten.get("transmitter_inventur"),
+        },
         "modelle": MODELLE,
         "arten": ARTEN,
         "gmail": mails_info,
         "meldungen": list(reversed(daten.get("meldungen") or []))[:15],
-        "papierkorb": [{"id": s["id"], "modell": s.get("modell"), "gesetzt": s.get("gesetzt"), "lot": s.get("lot"),
-                        "geloescht": s.get("geloescht")} for s in reversed(daten.get("papierkorb") or [])][:10],
+        "papierkorb": [{"id": s["id"], "art": s.get("art") or "sensor", "modell": s.get("modell"), "gesetzt": s.get("gesetzt") or s.get("gestartet"),
+                        "lot": s.get("lot"), "sn": s.get("sn"), "geloescht": s.get("geloescht")} for s in reversed(daten.get("papierkorb") or [])][:10],
     }
 
 
