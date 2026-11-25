@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dexcom_bestand"
 NAME = "Dexcom Sensorbestand"
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 
 # Daten: <config>/dexcom/ (wie in der früheren Pyscript-Fassung)
 ORDNER = "dexcom"

@@ -21,7 +21,7 @@
  *   titel: ""
  *   tab: sensoren | lieferungen | reklamationen
  */
-const DXK_VERSION = "1.2.3";
+const DXK_VERSION = "1.2.4";
 const WT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const NB = " ";
 const TABS = [
@@ -68,6 +68,8 @@ const MELDEN = [
 ];
 const GRUENDE_TX = ["Transmitterfehler", "Koppeln nicht möglich", "Signalverlust", "Batterie vorzeitig leer", "Beschädigt"];
 const MODELL_GTIN = { "00386270000927": "G6" };
+// Transmitter-Verpackungen (GTIN) – REF/PN beginnt bei Transmittern mit „STT-“, bei Sensoren mit „STS-“
+const TX_GTIN = { "00386270003072": "G6" };
 const GS = "\u001d";
 // GS1-Datenbezeichner auf Dexcom-Etiketten: feste Länge bzw. variabel (bis max. Zeichen)
 const GS1_FEST = { "01": 14, "02": 14, "11": 6, "17": 6 };
@@ -278,6 +280,28 @@ export function gs1Parse(roh) {
   };
 }
 
+// Code von einer Transmitter-Verpackung?
+export function istTransmitterCode(g) {
+  return !!(g && ((g.gtin && TX_GTIN[g.gtin]) || /^STT-/i.test(g.ref || "")));
+}
+
+// Code von einem Sensor-Etikett?
+export function istSensorCode(g, gelernt) {
+  return !!(g && !istTransmitterCode(g) && ((g.gtin && ((gelernt && gelernt[g.gtin]) || MODELL_GTIN[g.gtin])) || /^STS-/i.test(g.ref || "")));
+}
+
+// Seriennummer aus einem Code ohne GS1-Daten (oben auf der Transmitter-Packung steht ein Code nur mit der SN)
+export function snAusText(t) {
+  let s = String(t || "").trim();
+  if (s[0] === "]") s = s.slice(3);
+  return /^[0-9A-Z]{6}(-[0-9])?$/i.test(s) ? s.toUpperCase() : "";
+}
+
+// Seriennummer ohne Endung „-1“ (die CGM-Integration meldet sie ohne)
+export function snKern(sn) {
+  return String(sn || "").trim().toUpperCase().replace(/-[0-9]$/, "");
+}
+
 export function modellAusGtin(gtin, gelernt) {
   if (!gtin) return "";
   return (gelernt && gelernt[gtin]) || MODELL_GTIN[gtin] || "";
@@ -286,6 +310,14 @@ export function modellAusGtin(gtin, gelernt) {
 // Code im Foto lesen: zuerst der eingebaute BarcodeDetector (nur https, Chrome/Android),
 // sonst der eigene Data-Matrix-Leser (dexcom-dm.js, wird erst bei Bedarf geladen)
 export async function barcodeLesen(bild, opt = {}) {
+  let nurSn = null;
+  const pruefen = (text, quelle) => {
+    const g = gs1Parse(text);
+    if (g.lot || g.gtin) return { gs1: g, roh: text, quelle };
+    const sn = g.sn || snAusText(text);
+    if (sn && !nurSn) nurSn = { gs1: { ...g, sn }, roh: text, quelle, nurSn: true };
+    return null;
+  };
   if (typeof window !== "undefined" && "BarcodeDetector" in window && !opt.ohneDetector) {
     try {
       const formate = await window.BarcodeDetector.getSupportedFormats();
@@ -293,8 +325,8 @@ export async function barcodeLesen(bild, opt = {}) {
       if (wunsch.length) {
         const codes = await new window.BarcodeDetector({ formats: wunsch }).detect(bild);
         for (const c of codes) {
-          const g = gs1Parse(c.rawValue);
-          if (g.lot || g.gtin) return { gs1: g, roh: c.rawValue, quelle: "detector" };
+          const r = pruefen(c.rawValue, "detector");
+          if (r) return r;
         }
       }
     } catch (e) {
@@ -312,13 +344,22 @@ export async function barcodeLesen(bild, opt = {}) {
     const daten = ctx.getImageData(0, 0, c.width, c.height);
     const dm = await import(new URL(`./dexcom-dm.js?v=${DXK_VERSION}`, import.meta.url).href);
     await new Promise((r) => setTimeout(r, 30));
-    res = dm.dmLesenRgba(daten.data, c.width, c.height, { zeitMax: opt.zeitMax || 5000 });
+    // bei mehreren Codes im Bild weitersuchen, bis einer GS1-Daten hat (Transmitter-Packung: SN-Code oben, UDI unten)
+    const vollstaendig = (x) => {
+      const g = gs1Parse(x.text);
+      return !!(g.lot || g.gtin);
+    };
+    res = dm.dmLesenRgba(daten.data, c.width, c.height, { zeitMax: opt.zeitMax || 5000, pruefen: vollstaendig });
   } catch (e) {
+    if (nurSn && opt.snReicht) return nurSn;
     return { fehler: "leser", roh: [String(e && e.message ? e.message : e)] };
   }
+  if (res) {
+    const r = pruefen(res.text, "eigen");
+    if (r) return r;
+  }
+  if (nurSn && opt.snReicht) return nurSn;
   if (!res) return { fehler: "nichts" };
-  const g = gs1Parse(res.text);
-  if (g.lot || g.gtin) return { gs1: g, roh: res.text, quelle: "eigen" };
   return { fehler: "kein_gs1", roh: [res.text] };
 }
 
@@ -790,7 +831,14 @@ function fotoKopf(d) {
   const f = d.foto;
   if (!f) return `<div class="aktionen">${knopf("foto-nochmal", "Etikett fotografieren", "haupt", d, "mdi:camera")}</div><div class="klein">Liest LOT, REF/PN, Verfall und GTIN aus dem kleinen quadratischen Code auf dem Etikett – nah ran und scharf. Öffnet sich keine Kamera, vorher ein Foto machen und hier auswählen.</div>`;
   const ic = f.status === "ok" ? "mdi:check-circle-outline" : f.status === "lesen" ? "mdi:loading" : "mdi:alert-outline";
-  return `<div class="fotozeile"><img class="vorschau" src="${esc(f.url)}" alt="Foto"><div class="fotoinfo"><div class="fotostatus ${esc(f.status)}">${icon(ic)}<span>${esc(f.text)}</span></div>${f.fehler ? `<div class="fehler">${esc(f.fehler)}</div>` : ""}${knopf("foto-nochmal", "Neues Foto", "", d, "mdi:camera-retake-outline")}</div></div>`;
+  return `<div class="fotozeile"><img class="vorschau" src="${esc(f.url)}" alt="Foto"><div class="fotoinfo"><div class="fotostatus ${esc(f.status)}">${icon(ic)}<span>${esc(f.text)}</span></div>${f.fehler ? `<div class="fehler">${esc(f.fehler)}</div>` : ""}${d.txVorschlag ? knopf("tx-aus-foto", "Als Transmitter eintragen", "haupt", d, "mdi:radio-tower") : ""}${knopf("foto-nochmal", "Neues Foto", "", d, "mdi:camera-retake-outline")}</div></div>`;
+}
+
+function txFotoKopf(d) {
+  const f = d.foto;
+  if (!f) return `<div class="aktionen">${knopf("tx-foto-nochmal", "Verpackung fotografieren", "haupt", d, "mdi:camera")}</div><div class="klein">Liest Seriennummer, LOT und Verfall aus den quadratischen Codes auf der Transmitter-Packung – am besten beide Codes scharf im Bild. Öffnet sich keine Kamera, vorher ein Foto machen und hier auswählen.</div>`;
+  const ic = f.status === "ok" ? "mdi:check-circle-outline" : f.status === "lesen" ? "mdi:loading" : "mdi:alert-outline";
+  return `<div class="fotozeile"><img class="vorschau" src="${esc(f.url)}" alt="Foto"><div class="fotoinfo"><div class="fotostatus ${esc(f.status)}">${icon(ic)}<span>${esc(f.text)}</span></div>${knopf("tx-foto-nochmal", "Neues Foto", "", d, "mdi:camera-retake-outline")}</div></div>`;
 }
 
 function sensorForm(d, m) {
@@ -898,6 +946,7 @@ ${wert("Nicht mehr benutzt", x.entfernt_eff && x.status !== "laeuft" ? esc(tagZe
 ${wert("Sensoren", x.sensoren_n ? String(x.sensoren_n) : "")}
 ${wert("LOT", esc(x.lot || ""))}
 ${wert("Verwendbar bis", x.verwendbar_bis ? esc(datumText(x.verwendbar_bis, tz)) : "")}
+${!x.lot || !x.sn ? `<div class="h3 warnt" data-a="tx-foto" role="button" tabindex="0">${icon("mdi:camera-outline")} ${x.sn ? "LOT und Verfall fehlen" : "Seriennummer fehlt"} – Verpackung fotografieren</div>` : ""}
 ${wert("Quelle", esc(quelle))}
 ${wert("Notiz", x.notiz ? esc(x.notiz) : "")}
 ${rek}
@@ -918,7 +967,7 @@ ${oben}
 ${vorrat}
 <div class="abschnitt">Alle Transmitter</div>
 ${zeilen || `<div class="klein">Noch keine eingetragen.</div>`}
-<div class="aktionen">${knopf("tx-neu", "Neuer Transmitter …", "", d, "mdi:plus")}</div>
+<div class="aktionen">${knopf("tx-foto-neu", "Neuer Transmitter", "", d, "mdi:camera")}${knopf("tx-neu", "von Hand", "", d, "mdi:plus")}</div>
 ${fehlerZeile(d)}
 </div>
 ${dFuss(x ? knopf("tx-loeschen", "Löschen", "rot", d) : "", (x ? knopf("tx-bearbeiten", "Bearbeiten", "", d, "mdi:pencil-outline") : "") + knopf("zu", "Schließen", "haupt", d))}`;
@@ -929,7 +978,8 @@ function transmitterForm(d, m) {
   const neu = !!d.neu || !d.id;
   return `${dKopf(neu ? "Neuer Transmitter" : "Transmitter bearbeiten", d)}
 <div class="inhalt">
-${neu ? `<div class="info klein">${icon("mdi:information-outline")}<span>Die Seriennummer steht auf dem Transmitter und seiner Verpackung. Liefert die CGM-Integration das Transmitter-Ende (z. B. YourLoops), wird ein neuer Transmitter auch von selbst eingetragen.</span></div>` : ""}
+${txFotoKopf(d)}
+${neu && !d.foto ? `<div class="info klein">${icon("mdi:information-outline")}<span>Die Seriennummer steht auf dem Transmitter und seiner Verpackung. Liefert die CGM-Integration das Transmitter-Ende (z. B. YourLoops), wird ein neuer Transmitter auch von selbst eingetragen.</span></div>` : ""}
 ${feld("Seriennummer", eingabe("sn", f.sn, { ph: "z. B. 8XXXXX" }))}
 ${feld("In Betrieb seit", eingabe("gestartet", f.gestartet, { type: "datetime-local", cls: "mittel2" }), "erste Kopplung (mit dem ersten Sensor)")}
 ${feld("LOT", eingabe("lot", f.lot))}
@@ -1812,6 +1862,22 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
           return neu("form", { neu: false, f: this._txFelder(transmitterById(this._daten, d.id) || d.e) });
         case "tx-neu":
           return neu("form", { neu: true, f: this._txFelder(null) });
+        case "tx-foto-neu":
+          neu("form", { neu: true, f: this._txFelder(null) });
+          return this._txKamera();
+        case "tx-foto":
+          neu("form", { neu: false, f: this._txFelder(transmitterById(this._daten, d.id) || d.e) });
+          return this._txKamera();
+        case "tx-foto-nochmal":
+          return this._txKamera();
+        case "tx-aus-foto": {
+          const v = d.txVorschlag || {};
+          const foto = d.foto;
+          d.foto = null;
+          this._dialogOeffnen({ art: "transmitter", id: "", e: null, schritt: "form", neu: true, zaehlen: false,
+            f: { ...this._txFelder(null), ...v }, foto: foto ? { ...foto, status: "ok", text: v.text || foto.text } : null });
+          return undefined;
+        }
         case "tx-speichern":
           return this._txSpeichern();
         case "tx-loeschen":
@@ -1944,6 +2010,15 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
     _fotoAufnehmen(sensorId) {
       if (!this._fotoDialog(sensorId)) return;
       this._fotoZiel = sensorId || "";
+      this._fotoEingabe().click();
+    }
+
+    _txKamera() {
+      this._fotoZiel = { art: "tx" };
+      this._fotoEingabe().click();
+    }
+
+    _fotoEingabe() {
       if (!this._fotoInput) {
         const inp = document.createElement("input");
         inp.type = "file";
@@ -1954,12 +2029,63 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
         inp.addEventListener("change", () => {
           const datei = inp.files && inp.files[0];
           inp.value = "";
-          if (datei) this._fotoVerarbeiten(datei, this._fotoZiel);
+          if (!datei) return;
+          const z = this._fotoZiel;
+          if (z && typeof z === "object" && z.art === "tx") this._txFotoVerarbeiten(datei);
+          else this._fotoVerarbeiten(datei, z);
         });
         document.body.appendChild(inp);
         this._fotoInput = inp;
       }
-      this._fotoInput.click();
+      return this._fotoInput;
+    }
+
+    async _txFotoVerarbeiten(datei) {
+      const d = this._dlg;
+      if (!d || d.art !== "transmitter" || d.schritt !== "form") return;
+      const tz = this._tz();
+      if (d.foto && d.foto.url) URL.revokeObjectURL(d.foto.url);
+      const foto = { url: URL.createObjectURL(datei), status: "lesen", text: "Verpackung wird gelesen …", fehler: "" };
+      d.foto = foto;
+      this._dialogRender(false);
+      let bild;
+      try {
+        bild = await createImageBitmap(datei);
+      } catch (err) {
+        foto.status = "warn";
+        foto.text = "Das Foto ließ sich nicht öffnen.";
+        if (this._dlg === d) this._dialogRender(false);
+        return;
+      }
+      const erg = await barcodeLesen(bild, { snReicht: true });
+      if (bild.close) bild.close();
+      if (this._dlg !== d || d.foto !== foto) return;
+      const g = erg.gs1;
+      if (!g) {
+        foto.status = "warn";
+        foto.text = {
+          nichts: "Kein Code erkannt. Die quadratischen Codes auf der Packung nah und scharf fotografieren (gut beleuchtet, ohne Spiegelung) – oder die Felder abtippen.",
+          kein_gs1: "Code gelesen, aber ohne Packungsdaten. Felder bitte prüfen.",
+          leser: "Der Code-Leser ließ sich nicht laden. Felder bitte abtippen.",
+        }[erg.fehler] || "Verpackung nicht gelesen.";
+      } else if (istSensorCode(g, ((this._daten && this._daten.einstellungen) || {}).gtin_modell)) {
+        foto.status = "warn";
+        foto.text = "Das ist ein Sensor-Etikett, keine Transmitter-Packung. Neue Sensoren unter „Neuer Sensor“ eintragen.";
+      } else if (!d.neu && d.id && d.f.sn && g.sn && snKern(d.f.sn) !== snKern(g.sn)) {
+        foto.status = "warn";
+        foto.text = `Diese Packung gehört zu Transmitter ${g.sn}, nicht zu ${d.f.sn.trim()} – falsche Packung? Nichts übernommen.`;
+      } else {
+        for (const k of ["sn", "lot", "verwendbar_bis"]) if (g[k]) d.f[k] = g[k];
+        const teile = [g.sn && `SN ${g.sn}`, g.lot && `LOT ${g.lot}`, g.verwendbar_bis && `verwendbar bis ${datumText(g.verwendbar_bis, tz)}`].filter(Boolean);
+        if (erg.nurSn) {
+          foto.status = "warn";
+          foto.text = `Gelesen: ${teile.join(" · ")}. Für LOT und Verfall auch den unteren Code (UDI) scharf aufs Foto – oder abtippen.`;
+        } else {
+          foto.status = "ok";
+          foto.text = "Gelesen: " + teile.join(" · ") + (istTransmitterCode(g) ? "" : ". Unbekannte Packung – Felder bitte prüfen.");
+        }
+      }
+      this._dialogRender(false);
     }
 
     async _fotoVerarbeiten(datei, sensorId) {
@@ -1969,6 +2095,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       if (d.foto && d.foto.url) URL.revokeObjectURL(d.foto.url);
       const foto = { url: URL.createObjectURL(datei), status: "lesen", text: "Etikett wird gelesen …", fehler: "", upload: null };
       d.foto = foto;
+      d.txVorschlag = null;
       this._dialogRender(false);
       let bild;
       try {
@@ -1987,7 +2114,14 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined" 
       const erg = await barcodeLesen(bild);
       if (bild.close) bild.close();
       if (this._dlg !== d || d.foto !== foto) return;
-      if (erg.gs1) {
+      d.txVorschlag = null;
+      if (erg.gs1 && istTransmitterCode(erg.gs1)) {
+        const g = erg.gs1;
+        const teile = [g.sn && `SN ${g.sn}`, g.lot && `LOT ${g.lot}`, g.verwendbar_bis && `verwendbar bis ${datumText(g.verwendbar_bis, tz)}`].filter(Boolean);
+        d.txVorschlag = { sn: g.sn || "", lot: g.lot || "", verwendbar_bis: g.verwendbar_bis || "", text: "Gelesen: " + teile.join(" · ") };
+        foto.status = "warn";
+        foto.text = "Das ist eine Transmitter-Packung (" + teile.join(" · ") + ") – als Transmitter eintragen?";
+      } else if (erg.gs1) {
         const g = erg.gs1;
         for (const k of ["lot", "ref", "verwendbar_bis", "hergestellt", "gtin", "sn"]) if (g[k]) d.f[k] = g[k];
         const mod = modellAusGtin(g.gtin, ((this._daten && this._daten.einstellungen) || {}).gtin_modell);

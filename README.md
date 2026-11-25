@@ -26,6 +26,9 @@ mail recognition is tuned to German Dexcom, Dexcom webshop and DHL mails.*
   keine Sitzung mehr) und dem Sensorwechsel, bei dem ein neuer fällig ist. Liefert eine CGM-Integration das
   Transmitter-Ende (z. B. YourLoops/DBLG1), wird ein neuer Transmitter automatisch eingetragen. Hinweis, wenn
   ein gelieferter Transmitter bald aktiviert werden muss (Dexcom: innerhalb von 5 Monaten nach Versand).
+  „Neuer Transmitter“ öffnet die Kamera: die Codes auf der Verpackung (oben nur die Seriennummer, unten der
+  UDI-Code) füllen Seriennummer, LOT und Verfallsdatum aus; eine Transmitter-Packung im Sensor-Dialog wird
+  erkannt und kann gleich als Transmitter eingetragen werden.
   Beim G7 steckt der Transmitter im Sensor – dann bleibt dieser Teil ausgeblendet.
 - **Reklamationen:** Sensor oder Transmitter als reklamiert markieren, Support-Fälle aus den Mails
   (Fallnummer, Antwort „Ersatz verschickt“) zuordnen und überwachen, bis der Ersatz da ist. Ein Ersatzpaket

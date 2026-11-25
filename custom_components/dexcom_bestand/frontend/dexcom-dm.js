@@ -1235,12 +1235,21 @@ export function dmLesenGrau(G, w, h, opt = {}) {
   }
   bewertet.sort((a, b) => b.wertung - a.wertung);
   if (opt.debug) opt.debug.kandidaten = bewertet;
+  // opt.pruefen(res): nur passende Codes zurückgeben, sonst weitersuchen (Ersatz: der erste gelesene)
+  let ersatz = null;
+  const gelesen = [];
   for (const k of bewertet) {
     if (Date.now() > frist) break;
+    if (gelesen.some((q) => k.cx > q.x0 && k.cx < q.x1 && k.cy > q.y0 && k.cy < q.y1)) continue;
     const res = kandidatLesen(G, w, h, k, frist);
-    if (res) return res;
+    if (!res) continue;
+    if (!opt.pruefen || opt.pruefen(res)) return res;
+    if (!ersatz) ersatz = res;
+    const xs = res.ecken.map((p) => p.x);
+    const ys = res.ecken.map((p) => p.y);
+    gelesen.push({ x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) });
   }
-  return null;
+  return ersatz;
 }
 
 // nur für Tests
